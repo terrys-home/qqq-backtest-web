@@ -12,16 +12,9 @@ split_count = 7
 split_unit = initial_cash / split_count
 current_split = 0
 
-buy_split_by_mode = {
-    "침체": 2,
-    "중립": 0,
-    "상승": 1,
-    "과열": 0,
-}
-
 results = []
 
-for _, row in df.iterrows():
+for i, row in df.iterrows():
     date = row["Date"]
     price = row["Close"]
     rsi = row["WeeklyRSI"]
@@ -32,6 +25,12 @@ for _, row in df.iterrows():
     sell_amount = 0
     buy_splits_today = 0
 
+    # 전날 분할 상태
+    if len(results) == 0:
+        prev_split = 0
+    else:
+        prev_split = results[-1]["CurrentSplit"]
+
     # 과열이면 전량매도 후 분할 초기화
     if mode == "과열" and shares > 0:
         sell_amount = shares * price
@@ -40,11 +39,15 @@ for _, row in df.iterrows():
         current_split = 0
         action = "전량매도"
 
-    # 침체/상승이면 분할매수
+    # 침체/상승이면 전날 분할 + 1 만큼 맞춰서 매수
     elif mode in ["침체", "상승"]:
-        target_buy_splits = buy_split_by_mode[mode]
-        remain_splits = split_count - current_split
-        buy_splits_today = min(target_buy_splits, remain_splits)
+        target_split_today = prev_split + 1
+
+        # 최대 분할수 제한
+        target_split_today = min(target_split_today, split_count)
+
+        buy_splits_today = target_split_today - current_split
+        buy_splits_today = max(buy_splits_today, 0)
 
         if buy_splits_today > 0:
             buy_amount = min(split_unit * buy_splits_today, cash)
@@ -63,6 +66,7 @@ for _, row in df.iterrows():
         "Close": price,
         "WeeklyRSI": rsi,
         "WeeklyMode": mode,
+        "PrevSplit": prev_split,
         "Action": action,
         "BuySplitsToday": buy_splits_today,
         "CurrentSplit": current_split,
