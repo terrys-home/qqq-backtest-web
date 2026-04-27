@@ -9,6 +9,9 @@ if isinstance(df.columns, type(df.columns)) and hasattr(df.columns, "levels"):
     df.columns = df.columns.get_level_values(0)
 
 df = df.reset_index()
+# 200일 이동평균선 추가
+df["MA200"] = df["Close"].rolling(200).mean()
+df["MA120"] = df["Close"].rolling(120).mean()
 
 df.to_csv("QQQ_daily_data.csv", index=False, encoding="utf-8-sig")
 

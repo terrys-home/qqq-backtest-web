@@ -7,6 +7,12 @@ daily = pd.read_csv("QQQ_daily_with_mode.csv")
 daily["Date"] = pd.to_datetime(daily["Date"])
 daily = daily.sort_values("Date")
 
+if "MA120" not in daily.columns:
+    daily["MA120"] = daily["Close"].rolling(120).mean()
+
+if "MA200" not in daily.columns:
+    daily["MA200"] = daily["Close"].rolling(200).mean()
+
 weekly = pd.read_csv("QQQ_weekly_mode.csv")
 weekly["Date"] = pd.to_datetime(weekly["Date"])
 weekly = weekly.sort_values("Date")
@@ -19,30 +25,47 @@ def make_mode(rsi, sell_rsi):
         return "상승"
     elif rsi >= 30:
         return "중립"
-    else:
+    elif rsi >= 20:
         return "침체"
+    else:
+        return "극침체"
 
 
-def run_backtest(split_count=10, sell_rsi=70, buy_modes=["침체", "상승"]):
+def run_backtest(
+    split_count=10,
+    sell_rsi=70,
+    geuk_chimche_strength=3,
+    chimche_strength=2,
+    jungrip_strength=0,
+    sangseung_strength=1,
+    weight_mode="equal"
+):
     initial_cash = 100_000_000
     cash = initial_cash
     shares = 0
-    split_unit = initial_cash / split_count
+    base_split_unit = initial_cash / split_count
     current_split = 0
     results = []
+
+    strength_by_mode = {
+        "침체": chimche_strength,
+        "중립": jungrip_strength,
+        "상승": sangseung_strength,
+        "극침체": geuk_chimche_strength,
+    }
 
     for _, row in daily.iterrows():
         date = row["Date"]
         price = row["Close"]
         rsi = row["WeeklyRSI"]
         mode = make_mode(rsi, sell_rsi)
+        ma200 = row["MA200"]
 
         action = "관망"
         buy_amount = 0
         sell_amount = 0
         buy_splits_today = 0
-
-        prev_split = 0 if len(results) == 0 else results[-1]["CurrentSplit"]
+        weight = 1.0
 
         if mode == "과열" and shares > 0:
             sell_amount = shares * price
@@ -51,17 +74,33 @@ def run_backtest(split_count=10, sell_rsi=70, buy_modes=["침체", "상승"]):
             current_split = 0
             action = "전량매도"
 
-        elif mode in buy_modes:
-            target_split_today = min(prev_split + 1, split_count)
-            buy_splits_today = max(target_split_today - current_split, 0)
+        elif mode in strength_by_mode:
+            buy_strength = strength_by_mode[mode]
 
-            if buy_splits_today > 0:
-                buy_amount = min(split_unit * buy_splits_today, cash)
-                buy_shares = buy_amount / price
-                shares += buy_shares
-                cash -= buy_amount
-                current_split += buy_splits_today
-                action = f"{buy_splits_today}분할 매수"
+            if price > ma200:
+                trend_multiplier = 1.0
+            else:
+                trend_multiplier = 0.2
+
+            adjusted_strength = buy_strength * trend_multiplier
+
+            if adjusted_strength > 0:
+                target_split_today = min(current_split + adjusted_strength, split_count)
+                buy_splits_today = max(target_split_today - current_split, 0)
+
+                if buy_splits_today > 0:
+                    if weight_mode == "back_weighted":
+                        weight = 0.3 + (current_split / split_count) * 1.4
+                    else:
+                        weight = 1.0
+
+                    buy_amount = min(base_split_unit * buy_splits_today * weight, cash)
+                    buy_shares = buy_amount / price
+
+                    shares += buy_shares
+                    cash -= buy_amount
+                    current_split += buy_splits_today
+                    action = f"{buy_splits_today:.2f}분할 매수 / 가중치 {weight:.2f}"
 
         stock_value = shares * price
         total_asset = cash + stock_value
@@ -71,8 +110,10 @@ def run_backtest(split_count=10, sell_rsi=70, buy_modes=["침체", "상승"]):
             "Close": price,
             "WeeklyRSI": rsi,
             "Mode": mode,
+            "MA200": ma200,
             "Action": action,
             "BuySplitsToday": buy_splits_today,
+            "Weight": weight,
             "CurrentSplit": current_split,
             "BuyAmount": buy_amount,
             "SellAmount": sell_amount,
@@ -85,6 +126,9 @@ def run_backtest(split_count=10, sell_rsi=70, buy_modes=["침체", "상승"]):
     result_df = pd.DataFrame(results)
     result_df["Peak"] = result_df["TotalAsset"].cummax()
     result_df["Drawdown"] = (result_df["TotalAsset"] - result_df["Peak"]) / result_df["Peak"]
+    result_df["DailyReturn"] = result_df["TotalAsset"].pct_change().fillna(0) * 100
+    result_df["DailyReturn"] = result_df["TotalAsset"].pct_change() * 100
+    result_df["DailyReturn"] = result_df["DailyReturn"].fillna(0)
 
     return result_df
 
@@ -94,13 +138,11 @@ def home():
     split_count = request.args.get("split_count", default=10, type=int)
     sell_rsi = request.args.get("sell_rsi", default=70, type=int)
 
-    buy_modes = request.args.getlist("buy_modes")
-    if not buy_modes:
-        buy_modes = ["침체", "상승"]
-
-    checked_chimche = "checked" if "침체" in buy_modes else ""
-    checked_jungrip = "checked" if "중립" in buy_modes else ""
-    checked_sangseung = "checked" if "상승" in buy_modes else ""
+    geuk_chimche_strength = request.args.get("geuk_chimche_strength", default=3, type=int)
+    chimche_strength = request.args.get("chimche_strength", default=2, type=int)
+    jungrip_strength = request.args.get("jungrip_strength", default=0, type=int)
+    sangseung_strength = request.args.get("sangseung_strength", default=1, type=int)
+    weight_mode = request.args.get("weight_mode", default="equal")
 
     start_date = request.args.get("start_date")
     end_date = request.args.get("end_date")
@@ -130,7 +172,11 @@ def home():
     bt = run_backtest(
         split_count=split_count,
         sell_rsi=sell_rsi,
-        buy_modes=buy_modes
+        chimche_strength=chimche_strength,
+        geuk_chimche_strength=geuk_chimche_strength,
+        jungrip_strength=jungrip_strength,
+        sangseung_strength=sangseung_strength,
+        weight_mode=weight_mode
     )
 
     final = bt.tail(1).iloc[0]
@@ -146,6 +192,9 @@ def home():
 
     chart_labels = bt["Date"].dt.strftime("%Y-%m-%d").tolist()
     chart_assets = bt["TotalAsset"].round(0).tolist()
+    chart_daily_return = bt["DailyReturn"].round(2).tolist()
+    chart_drawdown = (bt["Drawdown"] * 100).round(2).tolist()
+    chart_daily_return = bt["DailyReturn"].round(2).tolist()
 
     table_rows = ""
     for _, row in filtered.sort_values("Date", ascending=False).iterrows():
@@ -158,171 +207,157 @@ def home():
         </tr>
         """
 
-    html = f"""
-    <html>
-    <head>
-        <meta charset="utf-8">
-        <title>QQQ RSI Mode</title>
-        <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-        <style>
-            body {{
-                font-family: Arial, sans-serif;
-                background: #f5f7fa;
-                padding: 40px;
-            }}
-            .card {{
-                background: white;
-                padding: 24px;
-                border-radius: 16px;
-                box-shadow: 0 4px 12px rgba(0,0,0,0.08);
-                margin-bottom: 24px;
-            }}
-            .mode {{
-                font-size: 36px;
-                font-weight: bold;
-                color: #2563eb;
-            }}
-            input, button {{
-                padding: 10px;
-                margin-right: 8px;
-                margin-bottom: 10px;
-            }}
-            label {{
-                margin-right: 10px;
-            }}
-            table {{
-                width: 100%;
-                border-collapse: collapse;
-                background: white;
-            }}
-            th, td {{
-                padding: 12px;
-                border-bottom: 1px solid #ddd;
-                text-align: center;
-            }}
-            th {{
-                background: #eef2ff;
-            }}
-        </style>
-    </head>
+    selected_equal = "selected" if weight_mode == "equal" else ""
+    selected_back = "selected" if weight_mode == "back_weighted" else ""
 
-    <body>
-        <div class="card">
-            <h1>QQQ 주간 RSI 모드</h1>
+html = f"""
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>QQQ RSI Mode</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
-            <form method="get">
-                <label>시작일</label>
-                <input type="date" name="start_date" value="{start_date}" min="{min_date}" max="{max_date}">
+    <style>
+        body {{
+            font-family: Arial;
+            background: #f5f7fa;
+            padding: 40px;
+        }}
 
-                <label>종료일</label>
-                <input type="date" name="end_date" value="{end_date}" min="{min_date}" max="{max_date}">
+        .card {{
+            background: white;
+            padding: 20px;
+            border-radius: 12px;
+            margin-bottom: 20px;
+        }}
 
-                <label>분할수</label>
-                <input type="number" name="split_count" value="{split_count}" min="1" max="50">
+        .mode {{
+            font-size: 32px;
+            color: blue;
+            font-weight: bold;
+        }}
+    </style>
+</head>
 
-                <label>매도 RSI</label>
-                <input type="number" name="sell_rsi" value="{sell_rsi}" min="50" max="90">
+<body>
 
-                <br>
+<div class="card">
+    <h1>QQQ 주간 RSI 모드</h1>
 
-                <label>
-                    <input type="checkbox" name="buy_modes" value="침체" {checked_chimche}>
-                    침체 매수
-                </label>
+    <form method="get">
+        시작일 <input type="date" name="start_date" value="{start_date}">
+        종료일 <input type="date" name="end_date" value="{end_date}"><br><br>
 
-                <label>
-                    <input type="checkbox" name="buy_modes" value="중립" {checked_jungrip}>
-                    중립 매수
-                </label>
+        분할수 <input type="number" name="split_count" value="{split_count}">
+        매도 RSI <input type="number" name="sell_rsi" value="{sell_rsi}"><br><br>
 
-                <label>
-                    <input type="checkbox" name="buy_modes" value="상승" {checked_sangseung}>
-                    상승 매수
-                </label>
+        극침체 <input type="number" name="geuk_chimche_strength" value="{geuk_chimche_strength}">
+        침체 <input type="number" name="chimche_strength" value="{chimche_strength}">
+        중립 <input type="number" name="jungrip_strength" value="{jungrip_strength}">
+        상승 <input type="number" name="sangseung_strength" value="{sangseung_strength}"><br><br>
 
-                <button type="submit">조회</button>
-            </form>
+        분할 비중
+        <select name="weight_mode">
+            <option value="equal" {"selected" if weight_mode=="equal" else ""}>균등</option>
+            <option value="back_weighted" {"selected" if weight_mode=="back_weighted" else ""}>뒤로 갈수록 크게</option>
+        </select>
 
-            <hr>
+        <button type="submit">조회</button>
+    </form>
 
-            <p>기준일: {latest_date}</p>
-            <p>QQQ 종가: ${latest_close}</p>
-            <p>주간 RSI: {latest_rsi}</p>
-            <div class="mode">현재 모드: {latest_mode}</div>
-        </div>
+    <hr>
 
-        <div class="card">
-            <h2>백테스트 결과</h2>
-            <p>분할수: {split_count}</p>
-            <p>매도 RSI: {sell_rsi}</p>
-            <p>매수모드: {' + '.join(buy_modes)}</p>
-            <p>최종자산: {final_asset:,.0f}원</p>
-            <p>수익금: {profit:,.0f}원</p>
-            <p>수익률: {return_rate:.2f}%</p>
-            <p>MDD: {mdd:.2f}%</p>
-            <p>현금: {cash:,.0f}원</p>
-            <p>주식가치: {stock_value:,.0f}원</p>
-            <p>현재 분할 상태: {current_split} / {split_count}</p>
-        </div>
+    <p>기준일: {latest_date}</p>
+    <p>QQQ 종가: ${latest_close}</p>
+    <p>주간 RSI: {latest_rsi}</p>
 
-        <div class="card">
-            <h2>자산곡선</h2>
-            <canvas id="assetChart" height="100"></canvas>
-        </div>
+    <div class="mode">현재 모드: {latest_mode}</div>
+</div>
 
-        <div class="card">
-            <h2>선택 기간 모드 기록</h2>
-            <table>
-                <tr>
-                    <th>날짜</th>
-                    <th>종가</th>
-                    <th>RSI</th>
-                    <th>모드</th>
-                </tr>
-                {table_rows}
-            </table>
-        </div>
+<div class="card">
+    <h2>백테스트 결과</h2>
 
-        <script>
-            const labels = {chart_labels};
-            const assets = {chart_assets};
+    <p>분할수: {split_count}</p>
+    <p>매도 RSI: {sell_rsi}</p>
+    <p>극침체: {geuk_chimche_strength}</p>
+    <p>침체: {chimche_strength}</p>
+    <p>중립: {jungrip_strength}</p>
+    <p>상승: {sangseung_strength}</p>
+    <p>분할 비중: {weight_mode}</p>
 
-            const ctx = document.getElementById('assetChart');
+    <p>최종자산: {final_asset:,.0f}원</p>
+    <p>수익금: {profit:,.0f}원</p>
+    <p>수익률: {return_rate:.2f}%</p>
+    <p>MDD: {mdd:.2f}%</p>
+    <p>현금: {cash:,.0f}원</p>
+    <p>주식가치: {stock_value:,.0f}원</p>
+</div>
 
-            new Chart(ctx, {{
-                type: 'line',
-                data: {{
-                    labels: labels,
-                    datasets: [{{
-                        label: '총자산',
-                        data: assets,
-                        borderWidth: 2,
-                        pointRadius: 0,
-                        tension: 0.1
-                    }}]
-                }},
-                options: {{
-                    responsive: true,
-                    scales: {{
-                        x: {{
-                            ticks: {{
-                                maxTicksLimit: 10
-                            }}
-                        }},
-                        y: {{
-                            ticks: {{
-                                callback: function(value) {{
-                                    return value.toLocaleString() + '원';
-                                }}
-                            }}
-                        }}
-                    }}
-                }}
-            }});
-        </script>
-    </body>
-    </html>
-    """
+<div class="card">
+    <h2>자산곡선</h2>
+    <canvas id="assetChart"></canvas>
+</div>
+
+<div class="card">
+    <h2>Drawdown</h2>
+    <canvas id="ddChart"></canvas>
+</div>
+
+<div class="card">
+    <h2>일별 수익률</h2>
+    <canvas id="dailyChart"></canvas>
+</div>
+
+<script>
+const labels = {chart_labels};
+const assets = {chart_assets};
+const drawdowns = {chart_drawdown};
+const dailyReturns = {chart_daily_return};
+
+// 자산곡선
+new Chart(document.getElementById("assetChart"), {{
+    type: "line",
+    data: {{
+        labels: labels,
+        datasets: [{{
+            label: "총자산",
+            data: assets,
+            borderWidth: 2,
+            pointRadius: 0
+        }}]
+    }}
+}});
+
+// DD
+new Chart(document.getElementById("ddChart"), {{
+    type: "line",
+    data: {{
+        labels: labels,
+        datasets: [{{
+            label: "Drawdown (%)",
+            data: drawdowns,
+            borderWidth: 2,
+            pointRadius: 0
+        }}]
+    }}
+}});
+
+// 일별 수익률
+new Chart(document.getElementById("dailyChart"), {{
+    type: "bar",
+    data: {{
+        labels: labels,
+        datasets: [{{
+            label: "일별 수익률 (%)",
+            data: dailyReturns
+        }}]
+    }}
+}});
+</script>
+
+</body>
+</html>
+"""
 
     return html
 
