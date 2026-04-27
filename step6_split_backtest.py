@@ -79,6 +79,15 @@ for i, row in df.iterrows():
     })
 
 result_df = pd.DataFrame(results)
+
+# 🔥 최고 자산 (Running Max)
+result_df["Peak"] = result_df["TotalAsset"].cummax()
+
+# 🔥 Drawdown 계산 (현재 자산이 최고점 대비 얼마나 떨어졌는지)
+result_df["Drawdown"] = (result_df["TotalAsset"] - result_df["Peak"]) / result_df["Peak"]
+
+# 🔥 MDD (최대 낙폭)
+mdd = result_df["Drawdown"].min()
 result_df.to_csv("QQQ_split_backtest.csv", index=False, encoding="utf-8-sig")
 
 final_asset = result_df.iloc[-1]["TotalAsset"]
@@ -91,3 +100,4 @@ print(f"초기자산: {initial_cash:,.0f}원")
 print(f"최종자산: {final_asset:,.0f}원")
 print(f"수익금: {profit:,.0f}원")
 print(f"수익률: {return_rate:.2f}%")
+print(f"MDD: {mdd:.2%}")
