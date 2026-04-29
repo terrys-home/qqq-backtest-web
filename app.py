@@ -1,7 +1,16 @@
 from flask import Flask, request
 import pandas as pd
 import json
-from ticker_config import TICKER_LIST, ticker_dict
+from ticker_config import (
+    TICKER_LIST,
+    ticker_dict,
+    TOP1_PRESETS,
+    STRATEGY_PARAM_MAP,
+    STRATEGY_LABELS,
+    get_preset,
+    get_preset_query,
+    optimizer_compare_rows,
+)
 
 app = Flask(__name__)
 
@@ -1182,6 +1191,193 @@ def build_walkforward_and_today_cards(
 
 # =========================
 
+
+
+# =========================
+# Step20+21: 프리셋 / 전략 파라미터 맵 / 최적화 비교 UI
+# =========================
+def metric_class_from_mdd(mdd_value):
+    try:
+        v = float(mdd_value)
+    except Exception:
+        return "warning"
+    if v <= -80:
+        return "danger"
+    if v <= -55:
+        return "warning"
+    return "positive"
+
+
+def practical_grade(cagr, mdd, stability):
+    try:
+        cagr = float(cagr)
+        mdd = float(mdd)
+        stability = float(stability)
+    except Exception:
+        return "검토"
+
+    if cagr >= 30 and mdd >= -80 and stability >= 55:
+        return "S 균형형"
+    if cagr >= 35 and mdd < -80:
+        return "A 공격형"
+    if stability >= 70 and mdd >= -65:
+        return "B 방어형"
+    return "C 연구용"
+
+
+def build_preset_buttons_html(ticker, strategy, start_date, end_date, fee_percent):
+    """티커별 추천 프리셋 버튼. 현재는 RSI 최적화 결과를 중심으로 구성."""
+    ticker = ticker.upper()
+
+    buttons = []
+    for preset_type in ["balanced", "aggressive", "defensive"]:
+        preset = get_preset(ticker, "rsi", preset_type)
+        if not preset:
+            continue
+
+        query = get_preset_query(
+            ticker=ticker,
+            strategy="rsi",
+            preset_type=preset_type,
+            start_date=start_date,
+            end_date=end_date,
+            fee_percent=fee_percent,
+        )
+        label = preset.get("label", preset_type)
+        desc = preset.get("desc", "")
+
+        buttons.append(f"""
+        <a class="preset-btn" href="/?{query}">
+            <b>{label}</b><br>
+            <span>{desc}</span>
+        </a>
+        """)
+
+    if not buttons:
+        return ""
+
+    return f"""
+    <div class="preset-box">
+        <p><b>Step20 추천 프리셋</b> <span class="small-note">Optimizer 결과 기반 자동입력</span></p>
+        <div class="preset-buttons">
+            {''.join(buttons)}
+        </div>
+    </div>
+    """
+
+
+def build_strategy_param_map_html():
+    """Step21: 전략별 파라미터 맵. 실제 엔진 이식 전에도 구조를 먼저 고정."""
+    sections = []
+
+    for strategy_key, config in STRATEGY_PARAM_MAP.items():
+        label = config.get("label", strategy_key)
+        status = config.get("status", "준비중")
+        params = config.get("params", [])
+        note = config.get("note", "")
+
+        li = "".join([f"<li>{p}</li>" for p in params])
+        sections.append(f"""
+        <div class="map-card">
+            <h3>{label}</h3>
+            <p class="small-note">상태: <b>{status}</b></p>
+            <ul>{li}</ul>
+            <p class="small-note">{note}</p>
+        </div>
+        """)
+
+    return f"""
+    <div class="card">
+        <h2>Step21 전략별 파라미터 맵</h2>
+        <p class="small-note">무한매수 / 떨사오팔 / 종사종팔 엔진을 나중에 연결하기 위한 공통 설계도입니다.</p>
+        <div class="map-grid">
+            {''.join(sections)}
+        </div>
+    </div>
+    """
+
+
+def build_optimizer_compare_html(strategy="rsi"):
+    """생성된 *_optimizer_top100.csv 파일을 읽어 티커별 1순위만 비교."""
+    rows = optimizer_compare_rows(strategy)
+    if not rows:
+        return f"""
+        <div class="card">
+            <h2>Step20 티커별 최적화 비교</h2>
+            <p>아직 비교할 Optimizer 결과가 없습니다.</p>
+            <pre>python optimizer_lab.py TQQQ {strategy}
+python optimizer_lab.py SOXL {strategy}
+python optimizer_lab.py SOXX {strategy}</pre>
+        </div>
+        """
+
+    card_rows = ""
+    table_rows = ""
+
+    for r in rows:
+        ticker = r.get("Ticker", "-")
+        score = r.get("Score", 0)
+        cagr = r.get("CAGR", 0)
+        mdd = r.get("MDD", 0)
+        stability = r.get("StabilityScore", 0)
+        grade = practical_grade(cagr, mdd, stability)
+        mdd_cls = metric_class_from_mdd(mdd)
+
+        card_rows += f"""
+        <div class="metric {mdd_cls}">
+            <h3>{ticker} / {grade}</h3>
+            <p>{score}</p>
+            <span class="small-note">CAGR {cagr}% / MDD {mdd}% / Stability {stability}</span>
+        </div>
+        """
+
+        table_rows += f"""
+        <tr>
+            <td>{ticker}</td>
+            <td>{score}</td>
+            <td>{cagr}%</td>
+            <td>{mdd}%</td>
+            <td>{stability}</td>
+            <td>{r.get("OverfitRisk", "-")}</td>
+            <td>{grade}</td>
+            <td>{r.get("split_count", "-")}</td>
+            <td>{r.get("sell_rsi", "-")}</td>
+            <td>{r.get("extreme_split", "-")}</td>
+            <td>{r.get("recession_split", "-")}</td>
+            <td>{r.get("neutral_split", "-")}</td>
+            <td>{r.get("boom_split", "-")}</td>
+        </tr>
+        """
+
+    return f"""
+    <div class="card hero">
+        <h2>Step20 티커별 Optimizer 1위 비교</h2>
+        <div class="grid">
+            {card_rows}
+        </div>
+        <div class="table-wrap">
+            <table border="1" cellpadding="6" cellspacing="0">
+                <tr>
+                    <th>티커</th>
+                    <th>Score</th>
+                    <th>CAGR</th>
+                    <th>MDD</th>
+                    <th>Stability</th>
+                    <th>Overfit</th>
+                    <th>실전등급</th>
+                    <th>분할수</th>
+                    <th>매도RSI</th>
+                    <th>극침체</th>
+                    <th>침체</th>
+                    <th>중립</th>
+                    <th>상승</th>
+                </tr>
+                {table_rows}
+            </table>
+        </div>
+    </div>
+    """
+
 # =========================
 # Step22 Optimizer Lab 결과 표시
 
@@ -1306,6 +1502,16 @@ def home():
     max_mdd = request.args.get("max_mdd", default=100, type=float)
     min_win = request.args.get("min_win", default=0, type=float)
     min_pf = request.args.get("min_pf", default=0, type=float)
+
+    preset_buttons_html = build_preset_buttons_html(
+        ticker=ticker,
+        strategy=strategy,
+        start_date=start_date,
+        end_date=end_date,
+        fee_percent=fee_percent,
+    )
+    strategy_param_map_html = build_strategy_param_map_html()
+    optimizer_compare_html = build_optimizer_compare_html(strategy="rsi")
 
 
     # =========================
@@ -1850,6 +2056,48 @@ def home():
             color: #6b7280;
             font-size: 13px;
         }}
+        .preset-box {{
+            background: #f9fafb;
+            border: 1px solid #e5e7eb;
+            border-radius: 12px;
+            padding: 12px;
+            margin: 10px 0 14px 0;
+        }}
+        .preset-buttons {{
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+        }}
+        .preset-btn {{
+            display: inline-block;
+            text-decoration: none;
+            color: #111827;
+            background: white;
+            border: 1px solid #d1d5db;
+            border-left: 5px solid #2196f3;
+            border-radius: 10px;
+            padding: 10px 14px;
+            min-width: 170px;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.04);
+        }}
+        .preset-btn:hover {{
+            transform: translateY(-2px);
+            box-shadow: 0 3px 8px rgba(0,0,0,0.08);
+        }}
+        .map-grid {{
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+            gap: 14px;
+        }}
+        .map-card {{
+            background: #f9fafb;
+            border: 1px solid #e5e7eb;
+            border-radius: 12px;
+            padding: 14px;
+        }}
+        .map-card h3 {{
+            margin-top: 0;
+        }}
         @media (max-width: 768px) {{
             body {{
                 padding: 12px;
@@ -1916,6 +2164,8 @@ def home():
 
         {strategy_inputs}
 
+        {preset_buttons_html}
+
         <button type="submit" name="action_mode" value="backtest">백테스트</button>
         <button type="submit" name="action_mode" value="deepmine">딥마이닝 TOP50</button>
         <button type="submit" name="action_mode" value="optimizer">Optimizer TOP100</button>
@@ -1966,6 +2216,10 @@ def home():
 </div>
 
 {walkforward_today_html}
+
+{optimizer_compare_html}
+
+{strategy_param_map_html}
 
 {yearly_html}
 
