@@ -150,7 +150,21 @@ def iter_params(strategy, mode="basic"):
                 "ma20_factor": ma20,
             }
 
-    elif strategy in ["infinite4", "tteolsa", "jongsajongpal"]:
+    elif strategy == "infinite4":
+        # 무한매수 4.0 v0: 사용자가 지정한 20/30/40 분할만 탐색
+        # 조합 수: 3 split x 3 target x 1 quarter = 9개
+        for split_count, target_profit, quarter_sell_ratio in itertools.product(
+            [20, 30, 40],
+            [5.0, 7.0, 10.0],
+            [25.0],
+        ):
+            yield {
+                "infinite_split_count": split_count,
+                "target_profit": target_profit,
+                "quarter_sell_ratio": quarter_sell_ratio,
+            }
+
+    elif strategy in ["tteolsa", "jongsajongpal"]:
         config = STRATEGY_PARAM_MAP.get(strategy, {})
         raise SystemExit(
             f"{config.get('label', strategy)} 전략은 Step21 파라미터 맵만 준비된 상태입니다. "
@@ -170,6 +184,18 @@ def run_one(strategy, params, fee_percent=0.25):
 
     if strategy == "original_upgrade":
         return lab.run_original_upgrade_backtest(fee_rate_pct=fee_percent, **params)
+
+    if strategy == "infinite4":
+        mapped = params.copy()
+        split_count = mapped.pop("infinite_split_count", mapped.pop("split_count", 20))
+        target_profit = mapped.pop("target_profit", 7.0)
+        quarter_sell_ratio = mapped.pop("quarter_sell_ratio", 25.0)
+        return lab.run_infinite4_v0_backtest(
+            split_count=split_count,
+            target_profit=target_profit,
+            quarter_sell_ratio=quarter_sell_ratio,
+            fee_rate_pct=fee_percent,
+        )
 
     raise ValueError(strategy)
 

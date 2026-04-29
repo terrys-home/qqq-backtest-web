@@ -921,6 +921,174 @@ def run_original_upgrade_backtest(
 
     return result_df, trade_df
 
+# =========================
+# Step22B-1: 무한매수 4.0 v0
+# =========================
+def run_infinite4_v0_backtest(
+    split_count=20,
+    target_profit=7.0,
+    quarter_sell_ratio=25.0,
+    fee_rate_pct=0.25,
+):
+    """무한매수법 4.0 v0 단순 엔진.
+
+    - 분할수 20/30/40만 실험
+    - T = INITIAL_CASH / split_count
+    - 미보유 상태: 1T 최초 진입
+    - 보유 중: 현재가가 평단 이하이고 남은 분할이 있으면 1T 추가매수
+    - 목표수익률 도달: 보유 수량의 quarter_sell_ratio 만큼 부분매도
+
+    v1 이후: 별점/전반전·후반전/소진모드/LOC·지정가 세부 로직 연결
+    """
+    split_count = int(split_count)
+    if split_count not in [20, 30, 40]:
+        split_count = 20 if split_count < 25 else 30 if split_count < 35 else 40
+
+    cash = INITIAL_CASH
+    shares = 0.0
+    avg_price = 0.0
+    current_split = 0.0
+
+    unit_cash = INITIAL_CASH / split_count
+    fee_rate = fee_rate_pct / 100
+    sell_ratio = max(0.01, min(float(quarter_sell_ratio) / 100, 1.0))
+
+    results = []
+    trade_logs = []
+
+    entry_date = None
+    entry_amount = 0.0
+
+    for _, row in daily.iterrows():
+        date = row["Date"]
+        price = float(row["Close"])
+        action = "관망"
+        mode = "소진모드" if current_split >= split_count else "일반모드"
+
+        if shares > 0 and avg_price > 0:
+            current_return = ((price / avg_price) - 1) * 100
+
+            if current_return >= target_profit:
+                if current_split <= 1.01 or sell_ratio >= 0.999:
+                    sell_fraction = 1.0
+                    sell_reason = f"목표수익률 {target_profit:.1f}% 도달 전량매도"
+                else:
+                    sell_fraction = sell_ratio
+                    sell_reason = f"목표수익률 {target_profit:.1f}% 도달 쿼터매도({quarter_sell_ratio:.1f}%)"
+
+                sell_shares = shares * sell_fraction
+                gross_sell = sell_shares * price
+                sell_fee = gross_sell * fee_rate
+                net_sell = gross_sell - sell_fee
+
+                cost_basis_sold = entry_amount * sell_fraction if entry_amount > 0 else avg_price * sell_shares
+                profit = net_sell - cost_basis_sold
+                return_pct = (profit / cost_basis_sold) * 100 if cost_basis_sold > 0 else 0
+                hold_days = (date - entry_date).days if entry_date is not None else 0
+
+                trade_logs.append({
+                    "BuyDate": entry_date,
+                    "SellDate": date,
+                    "HoldDays": hold_days,
+                    "BuyAmount": cost_basis_sold,
+                    "SellAmount": net_sell,
+                    "Profit": profit,
+                    "ReturnPct": return_pct,
+                    "Reason": sell_reason,
+                })
+
+                cash += net_sell
+                shares -= sell_shares
+                entry_amount -= cost_basis_sold
+                current_split = max(0.0, current_split * (1 - sell_fraction))
+
+                if shares <= 1e-9 or current_split <= 0.01:
+                    shares = 0.0
+                    avg_price = 0.0
+                    current_split = 0.0
+                    entry_date = None
+                    entry_amount = 0.0
+
+                action = "쿼터매도" if sell_fraction < 1.0 else "전량매도"
+
+        if action == "관망":
+            should_enter = shares <= 0
+            should_add = shares > 0 and price <= avg_price and current_split < split_count
+
+            if should_enter or should_add:
+                buy_amount = min(unit_cash, cash / (1 + fee_rate))
+
+                if buy_amount > 0:
+                    buy_fee = buy_amount * fee_rate
+                    total_buy_cost = buy_amount + buy_fee
+                    buy_shares = buy_amount / price if price > 0 else 0
+
+                    total_cost_before = shares * avg_price
+                    shares += buy_shares
+                    total_cost_after = total_cost_before + buy_amount
+                    avg_price = total_cost_after / shares if shares > 0 else 0
+
+                    cash -= total_buy_cost
+                    current_split = min(split_count, current_split + 1)
+
+                    if entry_date is None:
+                        entry_date = date
+                        entry_amount = total_buy_cost
+                    else:
+                        entry_amount += total_buy_cost
+
+                    action = "최초매수" if should_enter else "평단이하 추가매수"
+
+        stock_value = shares * price
+        total_asset = cash + stock_value
+        mode = "소진모드" if current_split >= split_count else "일반모드"
+
+        results.append({
+            "Date": date,
+            "Close": price,
+            "RSI": row.get("WeeklyRSI", row.get("RSI", 50)),
+            "Mode": mode,
+            "Action": action,
+            "Cash": cash,
+            "Shares": shares,
+            "StockValue": stock_value,
+            "TotalAsset": total_asset,
+            "CurrentSplit": current_split,
+        })
+
+    result_df = pd.DataFrame(results)
+    result_df = add_metrics(result_df)
+    trade_df = pd.DataFrame(trade_logs)
+
+    if not trade_df.empty:
+        maes = []
+        mfes = []
+        for _, trade in trade_df.iterrows():
+            if pd.isna(trade.get("BuyDate")) or pd.isna(trade.get("SellDate")):
+                maes.append(0)
+                mfes.append(0)
+                continue
+
+            period = daily[(daily["Date"] >= trade["BuyDate"]) & (daily["Date"] <= trade["SellDate"])].copy()
+            if period.empty:
+                maes.append(0)
+                mfes.append(0)
+                continue
+
+            entry_price = float(period.iloc[0]["Close"])
+            min_price = float(period["Close"].min())
+            max_price = float(period["Close"].max())
+            maes.append(((min_price / entry_price) - 1) * 100 if entry_price > 0 else 0)
+            mfes.append(((max_price / entry_price) - 1) * 100 if entry_price > 0 else 0)
+
+        trade_df["MAE"] = maes
+        trade_df["MFE"] = mfes
+
+    return result_df, trade_df
+
+
+
+
 
 
 # =========================
@@ -1492,6 +1660,11 @@ def home():
     ma5_factor = request.args.get("ma5_factor", default=3, type=int)
     ma20_factor = request.args.get("ma20_factor", default=5, type=int)
 
+    # Step22B 무한매수 4.0 v0 입력값
+    infinite_split_count = request.args.get("infinite_split_count", default=20, type=int)
+    infinite_target_profit = request.args.get("infinite_target_profit", default=7.0, type=float)
+    quarter_sell_ratio = request.args.get("quarter_sell_ratio", default=25.0, type=float)
+
     fee_percent = request.args.get("fee_percent", default=0.25, type=float)
     ticker_options = ""
     for tk, name in ticker_dict().items():
@@ -1559,7 +1732,7 @@ def home():
         </div>
         """
 
-    else:
+    elif strategy == "original_upgrade":
         bt, trade_df = run_original_upgrade_backtest(
             split_count=split_count,
             profit_target=profit_target,
@@ -1580,6 +1753,40 @@ def home():
             <label>MA20 매수배수 <input type="number" name="ma20_factor" value="{ma20_factor}"></label>
         </div>
         """
+
+    elif strategy == "infinite4":
+        if infinite_split_count not in [20, 30, 40]:
+            infinite_split_count = 20
+
+        split_count = infinite_split_count
+        bt, trade_df = run_infinite4_v0_backtest(
+            split_count=infinite_split_count,
+            target_profit=infinite_target_profit,
+            quarter_sell_ratio=quarter_sell_ratio,
+            fee_rate_pct=fee_percent,
+        )
+        strategy_name = "무한매수 4.0 v0"
+
+        strategy_inputs = f"""
+        <div class="input-row">
+            <label>분할횟수
+                <select name="infinite_split_count">
+                    <option value="20" {"selected" if infinite_split_count == 20 else ""}>20</option>
+                    <option value="30" {"selected" if infinite_split_count == 30 else ""}>30</option>
+                    <option value="40" {"selected" if infinite_split_count == 40 else ""}>40</option>
+                </select>
+            </label>
+            <label>목표수익률(%) <input type="number" step="0.1" name="infinite_target_profit" value="{infinite_target_profit}"></label>
+            <label>쿼터매도비율(%) <input type="number" step="1" name="quarter_sell_ratio" value="{quarter_sell_ratio}"></label>
+        </div>
+        <p class="small-note">
+            v0 단순엔진: T=원금/분할횟수, 미보유 1T 진입, 평단 이하 1T 추가매수, 목표수익률 도달 시 쿼터매도.<br>
+            별점/전반전·후반전/소진모드/LOC·지정가 세부 로직은 v1 이후에 붙입니다.
+        </p>
+        """
+
+    else:
+        return "지원하지 않는 전략입니다."
 
 
     # =========================
@@ -2155,7 +2362,7 @@ def home():
                     <option value="rsi" {"selected" if strategy == "rsi" else ""}>RSI 커스텀</option>
                     <option value="original" {"selected" if strategy == "original" else ""}>오리지널</option>
                     <option value="original_upgrade" {"selected" if strategy == "original_upgrade" else ""}>오리지널 2.0</option>
-                    <option value="infinite4" disabled>무한매수 4.0 준비중</option>
+                    <option value="infinite4" {"selected" if strategy == "infinite4" else ""}>무한매수 4.0 v0</option>
                     <option value="tteolsa" disabled>떨사오팔 준비중</option>
                     <option value="jongsajongpal" disabled>종사종팔 준비중</option>
                 </select>
