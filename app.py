@@ -14,6 +14,81 @@ from ticker_config import (
 
 app = Flask(__name__)
 
+# Step23A/B/C/D: V4 언이시트 근접 엔진
+try:
+    from muhan_v4_engine import run_infinite4_v4_core
+except Exception:
+    run_infinite4_v4_core = None
+
+# Step23E: V5 언이시트 동적별지점 엔진
+try:
+    from muhan_v5_engine import run_infinite4_v5_core
+except Exception:
+    run_infinite4_v5_core = None
+
+# Step24A: 라오어 무한매수 4.0 원문기반 엔진
+try:
+    from muhan_raor_v4_engine import run_raor_infinite4_core
+except Exception:
+    run_raor_infinite4_core = None
+
+# Step24B: 라오어 무한매수 4.0 원문기반 확장 엔진
+try:
+    from muhan_raor_v4_step24b_engine import run_raor_infinite4_step24b_core
+except Exception:
+    run_raor_infinite4_step24b_core = None
+
+
+# Step24C: 라오어 무한매수 4.0 원문기반 주기/매수일 보정 엔진
+try:
+    from muhan_raor_v4_step24c_engine import run_raor_infinite4_step24c_core
+except Exception:
+    run_raor_infinite4_step24c_core = None
+
+
+# Step24D: 로그/검증/주기상태 보강 엔진
+try:
+    from muhan_raor_v4_step24d_engine import run_raor_infinite4_step24d_core
+except Exception:
+    run_raor_infinite4_step24d_core = None
+
+# Step24E: 매일 매도예약 원문 보강 엔진
+try:
+    from muhan_raor_v4_step24e_engine import run_raor_infinite4_step24e_core
+except Exception:
+    run_raor_infinite4_step24e_core = None
+
+# Step24F: 지정가 전량매도 수익률 선택 + 매도예약 검증 보강 엔진
+try:
+    from muhan_raor_v4_step24f_engine import run_raor_infinite4_step24f_core
+except Exception:
+    run_raor_infinite4_step24f_core = None
+
+# Step24G: 지정가 전량매도 수익률 커스텀 입력 + 매도예약 검증 보강 엔진
+try:
+    from muhan_raor_v4_step24g_engine import run_raor_infinite4_step24g_core
+except Exception:
+    run_raor_infinite4_step24g_core = None
+
+# Step24H: Step24G 기반 + 같은날 체결신호 검증 로그 강화 엔진
+try:
+    from muhan_raor_v4_step24h_engine import run_raor_infinite4_step24h_core
+except Exception:
+    run_raor_infinite4_step24h_core = None
+
+# Step24L: Step24H 기반 + LOC 매수/매도 가격분리 및 일봉 선후관계 분리 로그 엔진
+try:
+    from muhan_raor_v4_step24l_engine import run_raor_infinite4_step24l_core
+except Exception:
+    run_raor_infinite4_step24l_core = None
+
+# Step24M: Step24L 기반 + 검증 카운터/Step24 전용 최적화 준비 엔진
+try:
+    from muhan_raor_v4_step24m_engine import run_raor_infinite4_step24m_core
+except Exception:
+    run_raor_infinite4_step24m_core = None
+
+
 INITIAL_CASH = 100_000_000
 
 
@@ -135,6 +210,168 @@ daily = None
 weekly = None
 
 
+def run_infinite4_v4_backtest(**kwargs):
+    """app/optimizer 공용 V4 래퍼.
+    muhan_v4_engine.run_infinite4_v4_core는 daily_df를 첫 인자로 요구하므로,
+    현재 선택된 전역 daily 데이터를 자동으로 주입한다.
+    """
+    if run_infinite4_v4_core is None:
+        raise ImportError("muhan_v4_engine.py 또는 run_infinite4_v4_core를 불러오지 못했습니다.")
+    if daily is None:
+        raise ValueError("daily 데이터가 로드되지 않았습니다. load_ticker_data() 후 실행하세요.")
+    return run_infinite4_v4_core(
+        daily_df=daily,
+        initial_cash=INITIAL_CASH,
+        **kwargs,
+    )
+
+
+def run_infinite4_v5_backtest(**kwargs):
+    """app/optimizer 공용 V5 래퍼.
+    V5는 기본 별점값을 초기값으로만 사용하고, 전반전/후반전/소진모드에 따라
+    내부에서 동적 별지점/다음 LOC/큰수 후보를 재계산한다.
+    """
+    if run_infinite4_v5_core is None:
+        raise ImportError("muhan_v5_engine.py 또는 run_infinite4_v5_core를 불러오지 못했습니다.")
+    if daily is None:
+        raise ValueError("daily 데이터가 로드되지 않았습니다. load_ticker_data() 후 실행하세요.")
+    return run_infinite4_v5_core(
+        daily_df=daily,
+        initial_cash=INITIAL_CASH,
+        **kwargs,
+    )
+
+
+def run_raor_infinite4_backtest(**kwargs):
+    """Step24A: 라오어 무한매수4.0 원문기반 엔진 래퍼."""
+    if run_raor_infinite4_core is None:
+        raise ImportError("muhan_raor_v4_engine.py 또는 run_raor_infinite4_core를 불러오지 못했습니다.")
+    if daily is None:
+        raise ValueError("daily 데이터가 로드되지 않았습니다. load_ticker_data() 후 실행하세요.")
+    return run_raor_infinite4_core(
+        daily_df=daily,
+        initial_cash=INITIAL_CASH,
+        **kwargs,
+    )
+
+
+def run_raor_infinite4_step24b_backtest(**kwargs):
+    """Step24B: 라오어 무한매수4.0 원문기반 확장 엔진 래퍼."""
+    if run_raor_infinite4_step24b_core is None:
+        raise ImportError("muhan_raor_v4_step24b_engine.py 또는 run_raor_infinite4_step24b_core를 불러오지 못했습니다.")
+    if daily is None:
+        raise ValueError("daily 데이터가 로드되지 않았습니다. load_ticker_data() 후 실행하세요.")
+    return run_raor_infinite4_step24b_core(
+        daily_df=daily,
+        initial_cash=INITIAL_CASH,
+        **kwargs,
+    )
+
+
+def run_raor_infinite4_step24c_backtest(**kwargs):
+    """Step24C: 라오어 무한매수4.0 원문기반 주기/매수일 보정 엔진 래퍼."""
+    if run_raor_infinite4_step24c_core is None:
+        raise ImportError("muhan_raor_v4_step24c_engine.py 또는 run_raor_infinite4_step24c_core를 불러오지 못했습니다.")
+    if daily is None:
+        raise ValueError("daily 데이터가 로드되지 않았습니다. load_ticker_data() 후 실행하세요.")
+    return run_raor_infinite4_step24c_core(
+        daily_df=daily,
+        initial_cash=INITIAL_CASH,
+        **kwargs,
+    )
+
+
+
+def run_raor_infinite4_step24d_backtest(**kwargs):
+    """Step24D: 라오어 무한매수4.0 원문기반 로그/검증/주기상태 보강 엔진 래퍼."""
+    if run_raor_infinite4_step24d_core is None:
+        raise ImportError("muhan_raor_v4_step24d_engine.py 또는 run_raor_infinite4_step24d_core를 불러오지 못했습니다.")
+    if daily is None:
+        raise ValueError("daily 데이터가 로드되지 않았습니다. load_ticker_data() 후 실행하세요.")
+    return run_raor_infinite4_step24d_core(
+        daily_df=daily,
+        initial_cash=INITIAL_CASH,
+        **kwargs,
+    )
+
+
+def run_raor_infinite4_step24e_backtest(**kwargs):
+    """Step24E: 매일 매도예약 원문 보강 엔진 래퍼."""
+    if run_raor_infinite4_step24e_core is None:
+        raise ImportError("muhan_raor_v4_step24e_engine.py 또는 run_raor_infinite4_step24e_core를 불러오지 못했습니다.")
+    if daily is None:
+        raise ValueError("daily 데이터가 로드되지 않았습니다. load_ticker_data() 후 실행하세요.")
+    return run_raor_infinite4_step24e_core(
+        daily_df=daily,
+        initial_cash=INITIAL_CASH,
+        **kwargs,
+    )
+
+
+
+def run_raor_infinite4_step24f_backtest(**kwargs):
+    """Step24F: 지정가 전량매도 수익률 선택 + 매도예약 검증 보강 엔진 래퍼."""
+    if run_raor_infinite4_step24f_core is None:
+        raise ImportError("muhan_raor_v4_step24f_engine.py 또는 run_raor_infinite4_step24f_core를 불러오지 못했습니다.")
+    if daily is None:
+        raise ValueError("daily 데이터가 로드되지 않았습니다. load_ticker_data() 후 실행하세요.")
+    return run_raor_infinite4_step24f_core(
+        daily_df=daily,
+        initial_cash=INITIAL_CASH,
+        **kwargs,
+    )
+
+
+def run_raor_infinite4_step24g_backtest(**kwargs):
+    """Step24G: 지정가 전량매도 수익률 커스텀 입력 + 매도예약 검증 보강 엔진 래퍼."""
+    if run_raor_infinite4_step24g_core is None:
+        raise ImportError("muhan_raor_v4_step24g_engine.py 또는 run_raor_infinite4_step24g_core를 불러오지 못했습니다.")
+    if daily is None:
+        raise ValueError("daily 데이터가 로드되지 않았습니다. load_ticker_data() 후 실행하세요.")
+    return run_raor_infinite4_step24g_core(
+        daily_df=daily,
+        initial_cash=INITIAL_CASH,
+        **kwargs,
+    )
+
+
+def run_raor_infinite4_step24h_backtest(**kwargs):
+    """Step24H: Step24G 기반 + 지정가/별LOC/매수LOC 동시신호 검증 로그 강화 엔진 래퍼."""
+    if run_raor_infinite4_step24h_core is None:
+        raise ImportError("muhan_raor_v4_step24h_engine.py 또는 run_raor_infinite4_step24h_core를 불러오지 못했습니다.")
+    if daily is None:
+        raise ValueError("daily 데이터가 로드되지 않았습니다. load_ticker_data() 후 실행하세요.")
+    return run_raor_infinite4_step24h_core(
+        daily_df=daily,
+        initial_cash=INITIAL_CASH,
+        **kwargs,
+    )
+
+
+def run_raor_infinite4_step24l_backtest(**kwargs):
+    """Step24L: Step24H 기반 + 별LOC 매수가/매도가 가격분리 및 일봉 선후관계 분리 로그 엔진 래퍼."""
+    if run_raor_infinite4_step24l_core is None:
+        raise ImportError("muhan_raor_v4_step24l_engine.py 또는 run_raor_infinite4_step24l_core를 불러오지 못했습니다.")
+    if daily is None:
+        raise ValueError("daily 데이터가 로드되지 않았습니다. load_ticker_data() 후 실행하세요.")
+    return run_raor_infinite4_step24l_core(
+        daily_df=daily,
+        initial_cash=INITIAL_CASH,
+        **kwargs,
+    )
+
+
+def run_raor_infinite4_step24m_backtest(**kwargs):
+    """Step24M: Step24L 기반 + 검증 카운터/Step24 전용 최적화 준비 엔진 래퍼."""
+    if run_raor_infinite4_step24m_core is None:
+        raise ImportError("muhan_raor_v4_step24m_engine.py 또는 run_raor_infinite4_step24m_core를 불러오지 못했습니다.")
+    if daily is None:
+        raise ValueError("daily 데이터가 로드되지 않았습니다. load_ticker_data() 후 실행하세요.")
+    return run_raor_infinite4_step24m_core(
+        daily_df=daily,
+        initial_cash=INITIAL_CASH,
+        **kwargs,
+    )
 
 # =========================
 # 공통 함수
@@ -447,6 +684,256 @@ def make_trade_summary(trade_df, bt):
     }
 
 
+def make_cycle_status(trade_df, bt, split_count):
+    """Step24D UI용 무한매수 주기 요약.
+    완료 주기 0 고정 문제 보정:
+    - trade_df의 CycleCompleted만 믿지 않고 bt의 CycleId 진행값으로도 추정한다.
+    - 현재 미청산이 있으면 max(CycleId)-1까지 완료, 없으면 max(CycleId)까지 완료로 본다.
+    """
+    status = {
+        "completed_cycles": 0,
+        "completed_profit": 0.0,
+        "active_cycle_label": "없음",
+        "active_cycle_id": None,
+        "active_start": "-",
+        "active_days": 0,
+        "active_t": 0.0,
+        "active_progress_pct": 0.0,
+        "active_remaining_t": float(split_count),
+        "open_position": "없음",
+    }
+    if bt is None or bt.empty:
+        return status
+
+    final_row = bt.tail(1).iloc[0]
+    shares = float(final_row.get("Shares", 0) or 0)
+    current_t = float(final_row.get("T", final_row.get("CurrentSplit", 0)) or 0)
+    open_now = shares > 1e-9 and current_t > 1e-9
+
+    max_cycle_id = 0
+    if "CycleId" in bt.columns:
+        try:
+            max_cycle_id = int(pd.to_numeric(bt["CycleId"], errors="coerce").fillna(0).max())
+        except Exception:
+            max_cycle_id = 0
+
+    completed_ids = set()
+    if trade_df is not None and not trade_df.empty and "CycleId" in trade_df.columns:
+        cdf = trade_df.copy()
+        if "CycleCompleted" in cdf.columns:
+            cdf["CycleCompleted"] = cdf["CycleCompleted"].fillna(False).astype(bool)
+            completed_ids |= set(cdf.loc[cdf["CycleCompleted"], "CycleId"].dropna().astype(int).tolist())
+
+    # bt CycleId 기준 보정: 현재 294회차 진행 중이면 1~293회차는 완료로 간주
+    if max_cycle_id > 0:
+        inferred_last_completed = max_cycle_id - (1 if open_now else 0)
+        if inferred_last_completed > 0:
+            completed_ids |= set(range(1, inferred_last_completed + 1))
+
+    status["completed_cycles"] = len(completed_ids)
+    if trade_df is not None and not trade_df.empty and completed_ids and "Profit" in trade_df.columns and "CycleId" in trade_df.columns:
+        try:
+            status["completed_profit"] = float(trade_df[trade_df["CycleId"].isin(completed_ids)]["Profit"].fillna(0).sum())
+        except Exception:
+            status["completed_profit"] = 0.0
+
+    cycle_id_raw = final_row.get("CycleId", None)
+    if open_now:
+        status["open_position"] = "있음"
+        try:
+            cycle_id = int(cycle_id_raw)
+        except Exception:
+            cycle_id = max_cycle_id if max_cycle_id > 0 else None
+        status["active_cycle_id"] = cycle_id
+        status["active_cycle_label"] = f"{cycle_id}회차" if cycle_id else "진행 중"
+        status["active_t"] = round(current_t, 2)
+        status["active_progress_pct"] = round((current_t / float(split_count)) * 100.0, 1) if split_count else 0.0
+        status["active_remaining_t"] = round(max(float(split_count) - current_t, 0.0), 2)
+
+        start_v = final_row.get("CycleStartDate", None)
+        if pd.isna(start_v) or start_v in (None, ""):
+            if cycle_id is not None and "CycleId" in bt.columns:
+                same = bt[bt["CycleId"] == cycle_id]
+                if not same.empty:
+                    # 같은 CycleId에서 실제 포지션이 시작된 첫 날짜 우선
+                    if "Shares" in same.columns:
+                        same_pos = same[same["Shares"] > 1e-9]
+                        start_v = same_pos["Date"].min() if not same_pos.empty else same["Date"].min()
+                    else:
+                        start_v = same["Date"].min()
+            else:
+                start_v = final_row.get("Date", None)
+        if pd.notna(start_v):
+            start_ts = pd.to_datetime(start_v)
+            end_ts = pd.to_datetime(final_row.get("Date"))
+            status["active_start"] = start_ts.strftime("%Y-%m-%d")
+            status["active_days"] = int((end_ts - start_ts).days)
+    return status
+
+
+def make_cycle_detail_summary(trade_df, bt, split_count, cycle_status):
+    """Step24D: 주기별 상세 분석용 집계."""
+    detail = {
+        "avg_cycle_days": 0,
+        "max_cycle_days": 0,
+        "min_cycle_days": 0,
+        "avg_cycle_return": 0.0,
+        "best_cycle_profit": 0.0,
+        "worst_cycle_profit": 0.0,
+        "avg_max_t": 0.0,
+        "max_used_t": 0.0,
+        "second_half_count": 0,
+        "exhaust_count": 0,
+        "quarter_sell_count": 0,
+    }
+    if bt is None or bt.empty or "CycleId" not in bt.columns:
+        return detail
+    temp = bt.copy()
+    temp["CycleIdNum"] = pd.to_numeric(temp["CycleId"], errors="coerce").fillna(0).astype(int)
+    temp = temp[temp["CycleIdNum"] > 0]
+    if temp.empty:
+        return detail
+
+    max_t_by_cycle = temp.groupby("CycleIdNum")["T" if "T" in temp.columns else "CurrentSplit"].max()
+    detail["avg_max_t"] = float(max_t_by_cycle.mean()) if not max_t_by_cycle.empty else 0.0
+    detail["max_used_t"] = float(max_t_by_cycle.max()) if not max_t_by_cycle.empty else 0.0
+
+    if "PhaseAfter" in temp.columns:
+        detail["second_half_count"] = int(temp.loc[temp["PhaseAfter"] == "후반전", "CycleIdNum"].nunique())
+        detail["exhaust_count"] = int(temp.loc[temp["PhaseAfter"] == "소진모드", "CycleIdNum"].nunique())
+    elif "Mode" in temp.columns:
+        detail["second_half_count"] = int(temp.loc[temp["Mode"] == "후반전", "CycleIdNum"].nunique())
+        detail["exhaust_count"] = int(temp.loc[temp["Mode"] == "소진모드", "CycleIdNum"].nunique())
+
+    if trade_df is not None and not trade_df.empty:
+        if "Reason" in trade_df.columns:
+            detail["quarter_sell_count"] = int(trade_df["Reason"].astype(str).str.contains("쿼터", na=False).sum())
+        if "CycleId" in trade_df.columns:
+            tdf = trade_df.copy()
+            tdf["CycleIdNum"] = pd.to_numeric(tdf["CycleId"], errors="coerce").fillna(0).astype(int)
+            completed_n = int(cycle_status.get("completed_cycles", 0) or 0)
+            completed_ids = set(range(1, completed_n + 1))
+            done = tdf[tdf["CycleIdNum"].isin(completed_ids)].copy()
+            if not done.empty:
+                profits = done.groupby("CycleIdNum")["Profit"].sum() if "Profit" in done.columns else pd.Series(dtype=float)
+                buys = done.groupby("CycleIdNum")["BuyAmount"].sum() if "BuyAmount" in done.columns else pd.Series(dtype=float)
+                if not profits.empty:
+                    returns = (profits / buys.replace(0, pd.NA) * 100).dropna()
+                    detail["avg_cycle_return"] = float(returns.mean()) if not returns.empty else 0.0
+                    detail["best_cycle_profit"] = float(profits.max())
+                    detail["worst_cycle_profit"] = float(profits.min())
+                days = []
+                for cid, g in done.groupby("CycleIdNum"):
+                    start_v = g["CycleStartDate"].dropna().iloc[0] if "CycleStartDate" in g.columns and not g["CycleStartDate"].dropna().empty else g["BuyDate"].min()
+                    end_v = g["SellDate"].max()
+                    if pd.notna(start_v) and pd.notna(end_v):
+                        days.append((pd.to_datetime(end_v) - pd.to_datetime(start_v)).days)
+                if days:
+                    detail["avg_cycle_days"] = sum(days) / len(days)
+                    detail["max_cycle_days"] = max(days)
+                    detail["min_cycle_days"] = min(days)
+    return detail
+
+
+def make_raor_validation_html(bt, trade_df, ticker, split_count):
+    """Step24D: 원문 규칙 검증 체크리스트 화면."""
+    if bt is None or bt.empty:
+        return ""
+    checks = []
+    checks.append(("첫매수 LOC", "첫매수LOC" in " ".join(bt.get("Action", pd.Series(dtype=str)).astype(str).head(20).tolist()) or "첫매수LOC" in " ".join(bt.get("Action", pd.Series(dtype=str)).astype(str).tolist()), "첫 매수는 전날종가 + LOC 여유율 기준으로 체결 로그 확인"))
+    checks.append(("T 증가 단위", "TDelta" in bt.columns, "TBefore/TAfter/TDelta 컬럼으로 0.5T·1T 증가 여부 확인"))
+    checks.append(("별% 공식", ticker in ["TQQQ", "SOXL"] and int(split_count) in [20, 40], "TQQQ/SOXL 20·40분할 공식만 허용"))
+    checks.append(("전반전/후반전", any(c in bt.columns for c in ["PhaseBefore", "PhaseAfter", "Mode"]), "PhaseBefore/PhaseAfter 또는 Mode로 전환 구간 확인"))
+    checks.append(("쿼터매도", trade_df is not None and not trade_df.empty and "Reason" in trade_df.columns, "Reason 컬럼에서 쿼터매도 발생일 확인"))
+    checks.append(("소진모드", any(c in bt.columns for c in ["RemainingTAfter", "Mode", "PhaseAfter"]), "RemainingTAfter 및 PhaseAfter로 소진모드 진입 확인"))
+    rows = ""
+    for name, ok, memo in checks:
+        mark = "✅" if ok else "⚠️"
+        cls = "positive" if ok else "warning"
+        rows += f"<tr><td>{mark}</td><td>{name}</td><td class='{cls}'>{'확인 가능' if ok else '추가 확인 필요'}</td><td>{memo}</td></tr>"
+    return f"""
+    <div class="card">
+        <h2>Step24D 원문 규칙 검증 체크리스트</h2>
+        <div class="table-wrap">
+            <table border="1" cellpadding="6" cellspacing="0">
+                <tr><th>상태</th><th>항목</th><th>판정</th><th>확인 포인트</th></tr>
+                {rows}
+            </table>
+        </div>
+    </div>
+    """
+
+
+def make_step24m_execution_validation_html(bt, trade_df):
+    """Step24M: 가격겹침/일봉선후관계/주기종료 누락 검증 요약."""
+    if bt is None or bt.empty:
+        return ""
+
+    def bool_count(df, col):
+        if df is None or df.empty or col not in df.columns:
+            return 0
+        return int(df[col].fillna(False).astype(bool).sum())
+
+    overlap_count = bool_count(bt, "BuySellPriceOverlap") + bool_count(trade_df, "BuySellPriceOverlap")
+    ambiguous_count = bool_count(bt, "DailyCandleOrderAmbiguous") + bool_count(trade_df, "DailyCandleOrderAmbiguous")
+
+    cycle_complete_missing = 0
+    zero_qty_rows = 0
+    if trade_df is not None and not trade_df.empty:
+        tdf = trade_df.copy()
+        qty_col = None
+        for c in ["HoldingQtyAfter", "SharesAfter", "QtyAfter"]:
+            if c in tdf.columns:
+                qty_col = c
+                break
+        if qty_col:
+            qty = pd.to_numeric(tdf[qty_col], errors="coerce")
+            zero_mask = qty.fillna(0).abs() <= 1e-9
+            zero_qty_rows = int(zero_mask.sum())
+            if "CycleCompleted" in tdf.columns:
+                completed = tdf["CycleCompleted"].fillna(False).astype(bool)
+                cycle_complete_missing = int((zero_mask & ~completed).sum())
+
+    latest_by_cycle_rows = ""
+    if "CycleId" in bt.columns:
+        temp = bt.copy()
+        temp["CycleIdNum"] = pd.to_numeric(temp["CycleId"], errors="coerce").fillna(0).astype(int)
+        temp = temp[temp["CycleIdNum"] > 0]
+        if not temp.empty:
+            last_rows = temp.sort_values("Date").groupby("CycleIdNum").tail(1).tail(8)
+            for _, r in last_rows.iterrows():
+                cid = int(r.get("CycleIdNum", 0))
+                date = pd.to_datetime(r.get("Date")).strftime("%Y-%m-%d") if pd.notna(r.get("Date")) else ""
+                t_val = float(r.get("T", r.get("CurrentSplit", 0)) or 0)
+                shares = float(r.get("Shares", 0) or 0)
+                phase = r.get("PhaseAfter", r.get("Mode", ""))
+                action = str(r.get("Action", ""))[:80]
+                latest_by_cycle_rows += f"<tr><td>{cid}</td><td>{date}</td><td>{t_val:.2f}T</td><td>{shares:,.4f}</td><td>{phase}</td><td>{action}</td></tr>"
+
+    overlap_cls = "positive" if overlap_count == 0 else "negative"
+    missing_cls = "positive" if cycle_complete_missing == 0 else "negative"
+    ambiguous_cls = "warning" if ambiguous_count > 0 else "positive"
+
+    return f"""
+    <div class="card">
+        <h2>Step24M 체결 검증 카운터</h2>
+        <div class="grid mini-grid">
+            <div class="metric {overlap_cls}"><h3>가격겹침 오류</h3><p>{overlap_count}건</p></div>
+            <div class="metric {ambiguous_cls}"><h3>일봉 선후관계 불명</h3><p>{ambiguous_count}건</p></div>
+            <div class="metric {missing_cls}"><h3>전량매도 완료누락</h3><p>{cycle_complete_missing}건</p></div>
+            <div class="metric"><h3>보유수량 0 로그</h3><p>{zero_qty_rows}건</p></div>
+        </div>
+        <p class="small-note">가격겹침 오류는 BuyLOCPrice가 SellLOCPrice 이상인 경우라 0건이어야 정상입니다. 일봉 선후관계 불명은 오류가 아니라 OHLC 데이터만으로 장중 순서를 확정할 수 없는 구간입니다.</p>
+        <div class="table-wrap">
+            <table border="1" cellpadding="6" cellspacing="0">
+                <tr><th>최근 Cycle</th><th>마지막일</th><th>T</th><th>보유수량</th><th>Phase</th><th>마지막 액션</th></tr>
+                {latest_by_cycle_rows}
+            </table>
+        </div>
+    </div>
+    """
+
+
 
 # =========================
 # 전략 1: RSI 커스텀
@@ -496,7 +983,6 @@ def run_backtest(
         mode = make_mode(rsi, sell_rsi)
         action = "관망"
 
-        # 매도 조건
         if shares > 0 and rsi >= sell_rsi:
             sell_amount = shares * price
             sell_fee = sell_amount * fee_rate
@@ -504,7 +990,6 @@ def run_backtest(
 
             profit = net_sell - entry_amount
             return_pct = (profit / entry_amount) * 100 if entry_amount > 0 else 0
-
             hold_days = (date - entry_date).days if entry_date else 0
 
             trade_logs.append({
@@ -552,7 +1037,6 @@ def run_backtest(
                     total_cost_after = total_cost_before + buy_amount
 
                     avg_price = total_cost_after / shares if shares > 0 else 0
-
                     cash -= total_buy_cost
 
                     if entry_date is None:
@@ -586,7 +1070,6 @@ def run_backtest(
     trade_df = pd.DataFrame(trade_logs)
 
     if not trade_df.empty:
-        # MAE / MFE
         maes = []
         mfes = []
 
@@ -602,20 +1085,18 @@ def run_backtest(
                 continue
 
             entry_price = period.iloc[0]["Close"]
-
             min_price = period["Close"].min()
             max_price = period["Close"].max()
 
-            mae = ((min_price / entry_price) - 1) * 100
-            mfe = ((max_price / entry_price) - 1) * 100
-
-            maes.append(mae)
-            mfes.append(mfe)
+            maes.append(((min_price / entry_price) - 1) * 100)
+            mfes.append(((max_price / entry_price) - 1) * 100)
 
         trade_df["MAE"] = maes
         trade_df["MFE"] = mfes
 
     return result_df, trade_df
+
+
 
 
 # =========================
@@ -922,23 +1403,30 @@ def run_original_upgrade_backtest(
     return result_df, trade_df
 
 # =========================
-# Step22B-1: 무한매수 4.0 v0
+# Step22B: 무한매수 4.0 V1
 # =========================
-def run_infinite4_v0_backtest(
+def run_infinite4_v1_backtest(
     split_count=20,
     target_profit=7.0,
     quarter_sell_ratio=25.0,
+    star_pct=7.0,
     fee_rate_pct=0.25,
 ):
-    """무한매수법 4.0 v0 단순 엔진.
+    """무한매수법 4.0 V1 백테스트 엔진.
 
-    - 분할수 20/30/40만 실험
-    - T = INITIAL_CASH / split_count
-    - 미보유 상태: 1T 최초 진입
-    - 보유 중: 현재가가 평단 이하이고 남은 분할이 있으면 1T 추가매수
-    - 목표수익률 도달: 보유 수량의 quarter_sell_ratio 만큼 부분매도
+    V0.5 포함:
+    - 분할수 20/30/40만 허용
+    - current_split >= split_count이면 추가매수 금지
+    - 현금/분할 초과매수 방지
 
-    v1 이후: 별점/전반전·후반전/소진모드/LOC·지정가 세부 로직 연결
+    V1 포함:
+    - 일반모드 / 소진모드 표시
+    - star_price = avg_price * (1 - star_pct/100)
+    - 보유 중 추가매수는 가격이 star_price 이하일 때만 1T
+    - 목표수익률 도달 시 쿼터매도
+
+    아직 단순화한 부분:
+    - 언이시트의 별점/별지점 정교 계산, 전반전/후반전, LOC/지정가 세부 구분은 V2에서 반영
     """
     split_count = int(split_count)
     if split_count not in [20, 30, 40]:
@@ -952,6 +1440,7 @@ def run_infinite4_v0_backtest(
     unit_cash = INITIAL_CASH / split_count
     fee_rate = fee_rate_pct / 100
     sell_ratio = max(0.01, min(float(quarter_sell_ratio) / 100, 1.0))
+    star_rate = max(0.0, float(star_pct)) / 100
 
     results = []
     trade_logs = []
@@ -963,57 +1452,65 @@ def run_infinite4_v0_backtest(
         date = row["Date"]
         price = float(row["Close"])
         action = "관망"
+
         mode = "소진모드" if current_split >= split_count else "일반모드"
+        star_price = avg_price * (1 - star_rate) if shares > 0 and avg_price > 0 else 0.0
+        current_return = ((price / avg_price) - 1) * 100 if shares > 0 and avg_price > 0 else 0.0
 
-        if shares > 0 and avg_price > 0:
-            current_return = ((price / avg_price) - 1) * 100
+        # 1) 목표수익률 도달 시 쿼터매도
+        if shares > 0 and avg_price > 0 and current_return >= target_profit:
+            if current_split <= 1.01 or sell_ratio >= 0.999:
+                sell_fraction = 1.0
+                sell_reason = f"목표수익률 {target_profit:.1f}% 도달 전량매도"
+            else:
+                sell_fraction = sell_ratio
+                sell_reason = f"목표수익률 {target_profit:.1f}% 도달 쿼터매도({quarter_sell_ratio:.1f}%)"
 
-            if current_return >= target_profit:
-                if current_split <= 1.01 or sell_ratio >= 0.999:
-                    sell_fraction = 1.0
-                    sell_reason = f"목표수익률 {target_profit:.1f}% 도달 전량매도"
-                else:
-                    sell_fraction = sell_ratio
-                    sell_reason = f"목표수익률 {target_profit:.1f}% 도달 쿼터매도({quarter_sell_ratio:.1f}%)"
+            sell_shares = shares * sell_fraction
+            gross_sell = sell_shares * price
+            sell_fee = gross_sell * fee_rate
+            net_sell = gross_sell - sell_fee
 
-                sell_shares = shares * sell_fraction
-                gross_sell = sell_shares * price
-                sell_fee = gross_sell * fee_rate
-                net_sell = gross_sell - sell_fee
+            cost_basis_sold = entry_amount * sell_fraction if entry_amount > 0 else avg_price * sell_shares
+            profit = net_sell - cost_basis_sold
+            return_pct = (profit / cost_basis_sold) * 100 if cost_basis_sold > 0 else 0
+            hold_days = (date - entry_date).days if entry_date is not None else 0
 
-                cost_basis_sold = entry_amount * sell_fraction if entry_amount > 0 else avg_price * sell_shares
-                profit = net_sell - cost_basis_sold
-                return_pct = (profit / cost_basis_sold) * 100 if cost_basis_sold > 0 else 0
-                hold_days = (date - entry_date).days if entry_date is not None else 0
+            trade_logs.append({
+                "BuyDate": entry_date,
+                "SellDate": date,
+                "HoldDays": hold_days,
+                "BuyAmount": cost_basis_sold,
+                "SellAmount": net_sell,
+                "Profit": profit,
+                "ReturnPct": return_pct,
+                "Reason": sell_reason,
+            })
 
-                trade_logs.append({
-                    "BuyDate": entry_date,
-                    "SellDate": date,
-                    "HoldDays": hold_days,
-                    "BuyAmount": cost_basis_sold,
-                    "SellAmount": net_sell,
-                    "Profit": profit,
-                    "ReturnPct": return_pct,
-                    "Reason": sell_reason,
-                })
+            cash += net_sell
+            shares -= sell_shares
+            entry_amount -= cost_basis_sold
+            current_split = max(0.0, current_split * (1 - sell_fraction))
 
-                cash += net_sell
-                shares -= sell_shares
-                entry_amount -= cost_basis_sold
-                current_split = max(0.0, current_split * (1 - sell_fraction))
+            if shares <= 1e-9 or current_split <= 0.01:
+                shares = 0.0
+                avg_price = 0.0
+                current_split = 0.0
+                entry_date = None
+                entry_amount = 0.0
 
-                if shares <= 1e-9 or current_split <= 0.01:
-                    shares = 0.0
-                    avg_price = 0.0
-                    current_split = 0.0
-                    entry_date = None
-                    entry_amount = 0.0
+            action = "쿼터매도" if sell_fraction < 1.0 else "전량매도"
 
-                action = "쿼터매도" if sell_fraction < 1.0 else "전량매도"
-
+        # 2) 매수: 미보유 최초 1T / 보유 중 별점 이하 1T 추가매수
         if action == "관망":
-            should_enter = shares <= 0
-            should_add = shares > 0 and price <= avg_price and current_split < split_count
+            has_capacity = current_split < split_count
+            should_enter = shares <= 0 and has_capacity
+            should_add = (
+                shares > 0
+                and has_capacity
+                and avg_price > 0
+                and price <= star_price
+            )
 
             if should_enter or should_add:
                 buy_amount = min(unit_cash, cash / (1 + fee_rate))
@@ -1029,7 +1526,7 @@ def run_infinite4_v0_backtest(
                     avg_price = total_cost_after / shares if shares > 0 else 0
 
                     cash -= total_buy_cost
-                    current_split = min(split_count, current_split + 1)
+                    current_split = min(float(split_count), current_split + 1)
 
                     if entry_date is None:
                         entry_date = date
@@ -1037,11 +1534,15 @@ def run_infinite4_v0_backtest(
                     else:
                         entry_amount += total_buy_cost
 
-                    action = "최초매수" if should_enter else "평단이하 추가매수"
+                    if should_enter:
+                        action = "최초매수"
+                    else:
+                        action = f"별점이하 추가매수({star_pct:.1f}%)"
 
         stock_value = shares * price
         total_asset = cash + stock_value
         mode = "소진모드" if current_split >= split_count else "일반모드"
+        star_price = avg_price * (1 - star_rate) if shares > 0 and avg_price > 0 else 0.0
 
         results.append({
             "Date": date,
@@ -1054,6 +1555,8 @@ def run_infinite4_v0_backtest(
             "StockValue": stock_value,
             "TotalAsset": total_asset,
             "CurrentSplit": current_split,
+            "AvgPrice": avg_price,
+            "StarPrice": star_price,
         })
 
     result_df = pd.DataFrame(results)
@@ -1088,10 +1591,221 @@ def run_infinite4_v0_backtest(
 
 
 
-
-
+# =========================
 
 # =========================
+# Step22D: 무한매수 4.0 V3
+# =========================
+def run_infinite4_v3_backtest(
+    split_count=30,
+    target_profit=7.0,
+    quarter_sell_ratio=25.0,
+    star_pct=7.0,
+    max_gap_pct=20.0,
+    max_hold_days=365,
+    fee_rate_pct=0.25,
+):
+    """무한매수법 4.0 V3 백테스트 엔진.
+
+    네가 작업하던 V1/V2 흐름을 유지하면서 Step22D에서 추가한 판단 보조 로직:
+    - 분할횟수 20/30/40 강제
+    - T = 총원금 / 분할횟수
+    - 첫 진입 1T
+    - 일반모드 / 소진모드
+    - 전반전 / 후반전 표시
+    - 별점 기준 추가매수
+    - 큰수매수 후보가 있더라도 브로커 LOC 괴리 제한(max_gap_pct) 안에서만 허용
+    - 목표수익률 도달 시 쿼터매도
+    - max_hold_days 초과 시 보유일 관리 매도
+    """
+    split_count = int(split_count)
+    if split_count not in [20, 30, 40]:
+        split_count = 20 if split_count < 25 else 30 if split_count < 35 else 40
+
+    cash = INITIAL_CASH
+    shares = 0.0
+    avg_price = 0.0
+    current_split = 0.0
+    entry_date = None
+    entry_amount = 0.0
+
+    unit_cash = INITIAL_CASH / split_count
+    fee_rate = float(fee_rate_pct) / 100
+    sell_ratio = max(0.01, min(float(quarter_sell_ratio) / 100, 1.0))
+    star_rate = max(0.0, float(star_pct)) / 100
+    max_gap_rate = max(0.0, float(max_gap_pct)) / 100
+    max_hold_days = int(max_hold_days) if max_hold_days else 365
+
+    results = []
+    trade_logs = []
+
+    for _, row in daily.iterrows():
+        date = row["Date"]
+        price = float(row["Close"])
+        rsi = row.get("WeeklyRSI", row.get("RSI", 50))
+        action = "관망"
+        reason = ""
+
+        hold_days = (date - entry_date).days if entry_date is not None and shares > 0 else 0
+        mode = "소진모드" if current_split >= split_count else "일반모드"
+        half = "전반전" if current_split < (split_count / 2) else "후반전"
+        star_price = avg_price * (1 - star_rate) if shares > 0 and avg_price > 0 else 0.0
+        big_buy_price = avg_price * (1 - max(star_rate * 1.5, star_rate + 0.03)) if shares > 0 and avg_price > 0 else 0.0
+        sell_price = avg_price * (1 + float(target_profit) / 100) if shares > 0 and avg_price > 0 else 0.0
+        current_return = ((price / avg_price) - 1) * 100 if shares > 0 and avg_price > 0 else 0.0
+
+        # 1) 매도: 목표수익률 또는 보유일 관리
+        if shares > 0 and avg_price > 0 and (current_return >= target_profit or hold_days >= max_hold_days):
+            if hold_days >= max_hold_days and current_return < target_profit:
+                sell_fraction = 1.0
+                sell_reason = f"보유일 {hold_days}일 >= max_hold_days {max_hold_days}일 관리매도"
+            elif current_split <= 1.01 or sell_ratio >= 0.999:
+                sell_fraction = 1.0
+                sell_reason = f"목표수익률 {target_profit:.1f}% 도달 전량매도"
+            else:
+                sell_fraction = sell_ratio
+                sell_reason = f"목표수익률 {target_profit:.1f}% 도달 쿼터매도({quarter_sell_ratio:.1f}%)"
+
+            sell_shares = shares * sell_fraction
+            gross_sell = sell_shares * price
+            sell_fee = gross_sell * fee_rate
+            net_sell = gross_sell - sell_fee
+            cost_basis_sold = entry_amount * sell_fraction if entry_amount > 0 else avg_price * sell_shares
+            profit = net_sell - cost_basis_sold
+            return_pct = (profit / cost_basis_sold) * 100 if cost_basis_sold > 0 else 0
+
+            trade_logs.append({
+                "BuyDate": entry_date,
+                "SellDate": date,
+                "HoldDays": hold_days,
+                "BuyAmount": cost_basis_sold,
+                "SellAmount": net_sell,
+                "Profit": profit,
+                "ReturnPct": return_pct,
+                "Reason": sell_reason,
+            })
+
+            cash += net_sell
+            shares -= sell_shares
+            entry_amount -= cost_basis_sold
+            current_split = max(0.0, current_split * (1 - sell_fraction))
+            action = "쿼터매도" if sell_fraction < 1.0 else "전량매도"
+            reason = sell_reason
+
+            if shares <= 1e-9 or current_split <= 0.01:
+                shares = 0.0
+                avg_price = 0.0
+                current_split = 0.0
+                entry_date = None
+                entry_amount = 0.0
+
+        # 2) 매수: 최초 1T / 별점 이하 / 큰수매수 후보
+        if action == "관망":
+            has_capacity = current_split < split_count
+            should_enter = shares <= 0 and has_capacity
+            loc_gap_ok = True
+            buy_tag = ""
+
+            should_add_star = False
+            should_add_big = False
+
+            if shares > 0 and has_capacity and avg_price > 0:
+                loc_gap_ok = price >= avg_price * (1 - max_gap_rate)
+                should_add_star = price <= star_price and loc_gap_ok
+                should_add_big = price <= big_buy_price and loc_gap_ok
+
+            if should_enter:
+                buy_tag = "최초 1T LOC"
+            elif should_add_big:
+                buy_tag = f"큰수매수 후보 LOC(max_gap {max_gap_pct:.1f}% 이내)"
+            elif should_add_star:
+                buy_tag = f"별점 이하 LOC({star_pct:.1f}%)"
+
+            if should_enter or should_add_big or should_add_star:
+                buy_amount = min(unit_cash, cash / (1 + fee_rate))
+                if buy_amount > 0 and price > 0:
+                    buy_fee = buy_amount * fee_rate
+                    total_buy_cost = buy_amount + buy_fee
+                    buy_shares = buy_amount / price
+
+                    total_cost_before = shares * avg_price
+                    shares += buy_shares
+                    total_cost_after = total_cost_before + buy_amount
+                    avg_price = total_cost_after / shares if shares > 0 else 0.0
+                    cash -= total_buy_cost
+                    current_split = min(float(split_count), current_split + 1)
+
+                    if entry_date is None:
+                        entry_date = date
+                        entry_amount = total_buy_cost
+                    else:
+                        entry_amount += total_buy_cost
+
+                    action = buy_tag
+                    reason = buy_tag
+
+        stock_value = shares * price
+        total_asset = cash + stock_value
+        mode = "소진모드" if current_split >= split_count else "일반모드"
+        half = "전반전" if current_split < (split_count / 2) else "후반전"
+        star_price = avg_price * (1 - star_rate) if shares > 0 and avg_price > 0 else 0.0
+        big_buy_price = avg_price * (1 - max(star_rate * 1.5, star_rate + 0.03)) if shares > 0 and avg_price > 0 else 0.0
+        sell_price = avg_price * (1 + float(target_profit) / 100) if shares > 0 and avg_price > 0 else 0.0
+        hold_days_now = (date - entry_date).days if entry_date is not None and shares > 0 else 0
+
+        results.append({
+            "Date": date,
+            "Close": price,
+            "RSI": rsi,
+            "Mode": mode,
+            "Half": half,
+            "Action": action,
+            "Reason": reason,
+            "Cash": cash,
+            "Shares": shares,
+            "StockValue": stock_value,
+            "TotalAsset": total_asset,
+            "CurrentSplit": current_split,
+            "AvgPrice": avg_price,
+            "StarPrice": star_price,
+            "BigBuyPrice": big_buy_price,
+            "SellPrice": sell_price,
+            "HoldDaysNow": hold_days_now,
+        })
+
+    result_df = pd.DataFrame(results)
+    result_df = add_metrics(result_df)
+    trade_df = pd.DataFrame(trade_logs)
+
+    if not trade_df.empty:
+        maes = []
+        mfes = []
+        for _, trade in trade_df.iterrows():
+            if pd.isna(trade.get("BuyDate")) or pd.isna(trade.get("SellDate")):
+                maes.append(0)
+                mfes.append(0)
+                continue
+            period = daily[(daily["Date"] >= trade["BuyDate"]) & (daily["Date"] <= trade["SellDate"])].copy()
+            if period.empty:
+                maes.append(0)
+                mfes.append(0)
+                continue
+            entry_price = float(period.iloc[0]["Close"])
+            min_price = float(period["Close"].min())
+            max_price = float(period["Close"].max())
+            maes.append(((min_price / entry_price) - 1) * 100 if entry_price > 0 else 0)
+            mfes.append(((max_price / entry_price) - 1) * 100 if entry_price > 0 else 0)
+        trade_df["MAE"] = maes
+        trade_df["MFE"] = mfes
+
+    return result_df, trade_df
+
+
+def run_infinite4_v2_backtest(**kwargs):
+    """기존 V2 메뉴가 남아 있어도 깨지지 않게 V3 엔진으로 연결."""
+    return run_infinite4_v3_backtest(**kwargs)
+
+
 # Step17 딥마이닝 TOP50 필터
 
 # =========================
@@ -1123,6 +1837,8 @@ def build_deepmine_table(
     df = load_deepmine_data(strategy, ticker)
 
     if df.empty:
+        if str(strategy).startswith("raor4_"):
+            return "<div class=\"card hero\"><h2>딥마이닝 TOP50</h2><p>라오어 무한매수 Step24 계열 전용 딥마이닝 결과 파일이 아직 없습니다.</p><p class=\"small-note\">현재 버튼은 과거 RSI/오리지널 계열 CSV와 섞지 않도록 막아두었습니다. Step24M 전용 최적화 파일을 만들면 여기서 표시됩니다.</p></div>", None
         return "", None
 
     cagr_col = pick_first_existing_col(df, ["CAGR", "cagr"])
@@ -1552,10 +2268,13 @@ python optimizer_lab.py SOXX {strategy}</pre>
 # =========================
 def load_optimizer_result(ticker, strategy):
     ticker = ticker.upper()
-    candidates = [
-        f"{ticker}_{strategy}_optimizer_top100.csv",
-        f"{ticker}_optimizer_top100.csv",
-    ]
+    if str(strategy).startswith("raor4_"):
+        candidates = [f"{ticker}_{strategy}_optimizer_top100.csv"]
+    else:
+        candidates = [
+            f"{ticker}_{strategy}_optimizer_top100.csv",
+            f"{ticker}_optimizer_top100.csv",
+        ]
     for file in candidates:
         try:
             return pd.read_csv(file), file
@@ -1660,10 +2379,19 @@ def home():
     ma5_factor = request.args.get("ma5_factor", default=3, type=int)
     ma20_factor = request.args.get("ma20_factor", default=5, type=int)
 
-    # Step22B 무한매수 4.0 v0 입력값
+    # Step22B 무한매수 4.0 V1 입력값
     infinite_split_count = request.args.get("infinite_split_count", default=20, type=int)
     infinite_target_profit = request.args.get("infinite_target_profit", default=7.0, type=float)
     quarter_sell_ratio = request.args.get("quarter_sell_ratio", default=25.0, type=float)
+    star_pct = request.args.get("star_pct", default=7.0, type=float)
+    max_gap_pct = request.args.get("max_gap_pct", default=20.0, type=float)
+    max_hold_days = request.args.get("max_hold_days", default=365, type=int)
+    sheet_loc_price = request.args.get("sheet_loc_price", default=0.0, type=float)
+    sheet_big_buy_price = request.args.get("sheet_big_buy_price", default=0.0, type=float)
+    sheet_sell_price = request.args.get("sheet_sell_price", default=0.0, type=float)
+    first_loc_buffer_pct = request.args.get("first_loc_buffer_pct", default=12.0, type=float)
+    default_designated_sell_pct = 15.0 if ticker == "TQQQ" else 20.0
+    designated_sell_pct = request.args.get("designated_sell_pct", default=default_designated_sell_pct, type=float)
 
     fee_percent = request.args.get("fee_percent", default=0.25, type=float)
     ticker_options = ""
@@ -1675,6 +2403,34 @@ def home():
     max_mdd = request.args.get("max_mdd", default=100, type=float)
     min_win = request.args.get("min_win", default=0, type=float)
     min_pf = request.args.get("min_pf", default=0, type=float)
+
+
+    # Step24C 보정: 기간설정은 화면 표시만이 아니라 백테스트 실행 데이터에도 적용한다.
+    # 기존에는 전체 데이터로 엔진을 먼저 돌린 뒤 결과만 잘라서, 선택기간 이전 포지션이 매매로그에 섞일 수 있었다.
+    _daily_full_for_notice = daily.copy()
+    start_dt_for_engine = pd.to_datetime(start_date, errors="coerce")
+    end_dt_for_engine = pd.to_datetime(end_date, errors="coerce")
+    if pd.isna(start_dt_for_engine):
+        start_dt_for_engine = daily["Date"].min()
+        start_date = start_dt_for_engine.strftime("%Y-%m-%d")
+    if pd.isna(end_dt_for_engine):
+        end_dt_for_engine = daily["Date"].max()
+        end_date = end_dt_for_engine.strftime("%Y-%m-%d")
+    if start_dt_for_engine > end_dt_for_engine:
+        start_dt_for_engine, end_dt_for_engine = end_dt_for_engine, start_dt_for_engine
+        start_date = start_dt_for_engine.strftime("%Y-%m-%d")
+        end_date = end_dt_for_engine.strftime("%Y-%m-%d")
+
+    daily = daily[(daily["Date"] >= start_dt_for_engine) & (daily["Date"] <= end_dt_for_engine)].copy().reset_index(drop=True)
+    if daily.empty:
+        return f"""
+        <html><head><meta charset="utf-8"></head>
+        <body style="font-family: Arial; padding: 40px;">
+            <h2>{ticker} 선택 기간에 데이터가 없습니다.</h2>
+            <p>데이터 범위: {_daily_full_for_notice["Date"].min().strftime("%Y-%m-%d")} ~ {_daily_full_for_notice["Date"].max().strftime("%Y-%m-%d")}</p>
+            <a href="/?ticker={ticker}">전체기간으로 돌아가기</a>
+        </body></html>
+        """
 
     preset_buttons_html = build_preset_buttons_html(
         ticker=ticker,
@@ -1717,55 +2473,55 @@ def home():
         </div>
         """
 
-    elif strategy == "original":
-        bt, trade_df = run_original_backtest(
-            split_count=split_count,
-            profit_target=profit_target,
-            fee_rate_pct=fee_percent,
-        )
-        strategy_name = "오리지널"
-
-        strategy_inputs = f"""
-        <div class="input-row">
-            <label>분할수 <input type="number" name="split_count" value="{split_count}"></label>
-            <label>목표수익률(%) <input type="number" step="0.1" name="profit_target" value="{profit_target}"></label>
-        </div>
-        """
-
-    elif strategy == "original_upgrade":
-        bt, trade_df = run_original_upgrade_backtest(
-            split_count=split_count,
-            profit_target=profit_target,
-            ma5_factor=ma5_factor,
-            ma20_factor=ma20_factor,
-            fee_rate_pct=fee_percent,
-        )
-        strategy_name = "오리지널 2.0"
-
-        strategy_inputs = f"""
-        <div class="input-row">
-            <label>분할수 <input type="number" name="split_count" value="{split_count}"></label>
-            <label>목표수익률(%) <input type="number" step="0.1" name="profit_target" value="{profit_target}"></label>
-        </div>
-
-        <div class="input-row">
-            <label>MA5 매수배수 <input type="number" name="ma5_factor" value="{ma5_factor}"></label>
-            <label>MA20 매수배수 <input type="number" name="ma20_factor" value="{ma20_factor}"></label>
-        </div>
-        """
-
+    
     elif strategy == "infinite4":
         if infinite_split_count not in [20, 30, 40]:
             infinite_split_count = 20
 
         split_count = infinite_split_count
-        bt, trade_df = run_infinite4_v0_backtest(
+        bt, trade_df = run_infinite4_v1_backtest(
             split_count=infinite_split_count,
             target_profit=infinite_target_profit,
             quarter_sell_ratio=quarter_sell_ratio,
+            star_pct=star_pct,
             fee_rate_pct=fee_percent,
         )
-        strategy_name = "무한매수 4.0 v0"
+        strategy_name = "무한매수 4.0 V1"
+
+        strategy_inputs = f"""
+        <div class="input-row">
+            <label>분할횟수
+                <select name="infinite_split_count">
+                    <option value="20" {"selected" if infinite_split_count == 20 else ""}>20</option>
+                    <option value="30" {"selected" if infinite_split_count == 30 else ""}>30</option>
+                    <option value="40" {"selected" if infinite_split_count == 40 else ""}>40</option>
+                </select>
+            </label>
+            <label>목표수익률(%) <input type="number" step="0.1" name="infinite_target_profit" value="{infinite_target_profit}"></label>
+            <label>쿼터매도비율(%) <input type="number" step="1" name="quarter_sell_ratio" value="{quarter_sell_ratio}"></label>
+            <label>별점 기준(%) <input type="number" step="0.1" name="star_pct" value="{star_pct}"></label>
+        </div>
+        <p class="small-note">
+            V1 엔진: T=원금/분할횟수, 미보유 1T 진입, 보유 중 현재가가 별점가(avg×(1-star%)) 이하일 때만 1T 추가매수,<br>
+            분할 소진 시 추가매수 금지, 목표수익률 도달 시 쿼터매도. 전반전/후반전·LOC/지정가 세부 로직은 V2에서 반영합니다.
+        </p>
+        """
+
+    elif strategy == "infinite4_v2":
+        if infinite_split_count not in [20, 30, 40]:
+            infinite_split_count = 30
+
+        split_count = infinite_split_count
+
+        bt, trade_df = run_infinite4_v2_backtest(
+            split_count=infinite_split_count,
+            target_profit=infinite_target_profit,
+            quarter_sell_ratio=quarter_sell_ratio,
+            star_pct=star_pct,
+            max_gap_pct=max_gap_pct,
+            fee_rate_pct=fee_percent,
+        )
+        strategy_name = "무한매수 4.0 V2"
 
         strategy_inputs = f"""
         <div class="input-row">
@@ -1779,11 +2535,475 @@ def home():
             <label>목표수익률(%) <input type="number" step="0.1" name="infinite_target_profit" value="{infinite_target_profit}"></label>
             <label>쿼터매도비율(%) <input type="number" step="1" name="quarter_sell_ratio" value="{quarter_sell_ratio}"></label>
         </div>
+
+        <div class="input-row">
+            <label>별점 기준(%) <input type="number" step="0.1" name="star_pct" value="{star_pct}"></label>
+            <label>브로커 허용폭(%) <input type="number" step="1" name="max_gap_pct" value="{max_gap_pct}"></label>
+        </div>
+
         <p class="small-note">
-            v0 단순엔진: T=원금/분할횟수, 미보유 1T 진입, 평단 이하 1T 추가매수, 목표수익률 도달 시 쿼터매도.<br>
-            별점/전반전·후반전/소진모드/LOC·지정가 세부 로직은 v1 이후에 붙입니다.
+            V2: 언이시트 수동입력형 기반. 최초 1T 진입, 별점 이하 추가매수, 큰수매수 구조,
+            분할 소진 제한, 목표수익률 도달 시 쿼터매도.
         </p>
         """
+
+    elif strategy == "infinite4_v3":
+        if infinite_split_count not in [20, 30, 40]:
+            infinite_split_count = 30
+
+        split_count = infinite_split_count
+        bt, trade_df = run_infinite4_v3_backtest(
+            split_count=infinite_split_count,
+            target_profit=infinite_target_profit,
+            quarter_sell_ratio=quarter_sell_ratio,
+            star_pct=star_pct,
+            max_gap_pct=max_gap_pct,
+            max_hold_days=max_hold_days,
+            fee_rate_pct=fee_percent,
+        )
+        strategy_name = "무한매수 4.0 V3"
+
+        strategy_inputs = f"""
+        <div class="input-row">
+            <label>분할횟수
+                <select name="infinite_split_count">
+                    <option value="20" {"selected" if infinite_split_count == 20 else ""}>20</option>
+                    <option value="30" {"selected" if infinite_split_count == 30 else ""}>30</option>
+                    <option value="40" {"selected" if infinite_split_count == 40 else ""}>40</option>
+                </select>
+            </label>
+            <label>목표수익률(%) <input type="number" step="0.1" name="infinite_target_profit" value="{infinite_target_profit}"></label>
+            <label>쿼터매도비율(%) <input type="number" step="1" name="quarter_sell_ratio" value="{quarter_sell_ratio}"></label>
+        </div>
+
+        <div class="input-row">
+            <label>별점 기준(%) <input type="number" step="0.1" name="star_pct" value="{star_pct}"></label>
+            <label>브로커 LOC 허용폭(%) <input type="number" step="1" name="max_gap_pct" value="{max_gap_pct}"></label>
+            <label>최대 보유일 <input type="number" step="1" name="max_hold_days" value="{max_hold_days}"></label>
+        </div>
+
+        <p class="small-note">
+            V3: V2 흐름에 전반전/후반전, 큰수매수 후보, LOC 괴리 제한, max_hold_days 보유일 관리가 추가된 판단엔진입니다.
+        </p>
+        """
+
+
+    elif strategy == "infinite4_v4":
+        if infinite_split_count not in [20, 30, 40]:
+            infinite_split_count = 30
+        split_count = infinite_split_count
+        bt, trade_df = run_infinite4_v4_backtest(
+            split_count=infinite_split_count, target_profit=infinite_target_profit,
+            quarter_sell_ratio=quarter_sell_ratio, star_pct=star_pct,
+            max_gap_pct=max_gap_pct, max_hold_days=max_hold_days,
+            sheet_loc_price=sheet_loc_price, sheet_big_buy_price=sheet_big_buy_price,
+            sheet_sell_price=sheet_sell_price, fee_rate_pct=fee_percent,
+        )
+        strategy_name = "무한매수 4.0 V4 / Step23A-B-C"
+        strategy_inputs = f"""
+        <div class="input-row">
+            <label>분할횟수
+                <select name="infinite_split_count">
+                    <option value="20" {"selected" if infinite_split_count == 20 else ""}>20</option>
+                    <option value="30" {"selected" if infinite_split_count == 30 else ""}>30</option>
+                    <option value="40" {"selected" if infinite_split_count == 40 else ""}>40</option>
+                </select>
+            </label>
+            <label>목표수익률(%) <input type="number" step="0.1" name="infinite_target_profit" value="{infinite_target_profit}"></label>
+            <label>쿼터매도비율(%) <input type="number" step="1" name="quarter_sell_ratio" value="{quarter_sell_ratio}"></label>
+        </div>
+        <div class="input-row">
+            <label>기본 별점(%) <input type="number" step="0.1" name="star_pct" value="{star_pct}"></label>
+            <label>LOC 괴리 제한(%) <input type="number" step="1" name="max_gap_pct" value="{max_gap_pct}"></label>
+            <label>최대 보유일 <input type="number" step="1" name="max_hold_days" value="{max_hold_days}"></label>
+        </div>
+        <div class="input-row">
+            <label>언이시트 LOC가 <input type="number" step="0.01" name="sheet_loc_price" value="{sheet_loc_price}"></label>
+            <label>언이시트 큰수가 <input type="number" step="0.01" name="sheet_big_buy_price" value="{sheet_big_buy_price}"></label>
+            <label>언이시트 매도가 <input type="number" step="0.01" name="sheet_sell_price" value="{sheet_sell_price}"></label>
+        </div>
+        <p class="small-note">
+            V4: 언이시트 입력값이 있으면 우선 적용하고, 없으면 평균단가↔매도가↔별지점을 자동 역산합니다.<br>
+            전반전/후반전 쿼터매도, 소진모드, 큰수매수, LOC 괴리 제한을 강화했습니다.
+        </p>
+        """
+
+
+
+    elif strategy == "infinite4_v5":
+        if infinite_split_count not in [20, 30, 40]:
+            infinite_split_count = 30
+        split_count = infinite_split_count
+        bt, trade_df = run_infinite4_v5_backtest(
+            split_count=infinite_split_count, target_profit=infinite_target_profit,
+            quarter_sell_ratio=quarter_sell_ratio, star_pct=star_pct,
+            max_gap_pct=max_gap_pct, max_hold_days=max_hold_days,
+            sheet_loc_price=sheet_loc_price, sheet_big_buy_price=sheet_big_buy_price,
+            sheet_sell_price=sheet_sell_price, fee_rate_pct=fee_percent,
+        )
+        strategy_name = "무한매수 4.0 V5 / Step23E 동적별지점"
+        strategy_inputs = f"""
+        <div class="input-row">
+            <label>분할횟수
+                <select name="infinite_split_count">
+                    <option value="20" {"selected" if infinite_split_count == 20 else ""}>20</option>
+                    <option value="30" {"selected" if infinite_split_count == 30 else ""}>30</option>
+                    <option value="40" {"selected" if infinite_split_count == 40 else ""}>40</option>
+                </select>
+            </label>
+            <label>목표수익률(%) <input type="number" step="0.1" name="infinite_target_profit" value="{infinite_target_profit}"></label>
+            <label>쿼터매도비율(%) <input type="number" step="1" name="quarter_sell_ratio" value="{quarter_sell_ratio}"></label>
+        </div>
+        <div class="input-row">
+            <label>초기 별점(%) <input type="number" step="0.1" name="star_pct" value="{star_pct}"></label>
+            <label>LOC 괴리 제한(%) <input type="number" step="1" name="max_gap_pct" value="{max_gap_pct}"></label>
+            <label>최대 보유일 <input type="number" step="1" name="max_hold_days" value="{max_hold_days}"></label>
+        </div>
+        <div class="input-row">
+            <label>언이시트 LOC가 <input type="number" step="0.01" name="sheet_loc_price" value="{sheet_loc_price}"></label>
+            <label>언이시트 큰수가 <input type="number" step="0.01" name="sheet_big_buy_price" value="{sheet_big_buy_price}"></label>
+            <label>언이시트 매도가 <input type="number" step="0.01" name="sheet_sell_price" value="{sheet_sell_price}"></label>
+        </div>
+        <p class="small-note">
+            V5: 화면의 별점값은 고정값이 아니라 초기값입니다. 실제 별지점은 전반전/후반전/소진모드, 분할진행률, 평균단가 대비 현재가에 따라 자동 가변됩니다.<br>
+            언이시트 LOC/큰수/매도가 입력값이 있으면 우선 적용하고, 없으면 동적 별점 레이어로 다음 LOC와 큰수 후보를 산출합니다.
+        </p>
+        """
+
+    elif strategy == "raor4_original":
+        # 라오어 원문 별% 공식이 명시된 20/40분할만 지원한다.
+        if infinite_split_count not in [20, 40]:
+            infinite_split_count = 40
+        split_count = infinite_split_count
+        bt, trade_df = run_raor_infinite4_backtest(
+            ticker=ticker,
+            split_count=infinite_split_count,
+            first_loc_buffer_pct=first_loc_buffer_pct,
+            fee_rate_pct=fee_percent,
+        )
+        strategy_name = "라오어 무한매수4.0 원문엔진 / Step24A"
+        strategy_inputs = f"""
+        <div class="input-row">
+            <label>분할횟수
+                <select name="infinite_split_count">
+                    <option value="20" {"selected" if infinite_split_count == 20 else ""}>20</option>
+                    <option value="40" {"selected" if infinite_split_count == 40 else ""}>40</option>
+                </select>
+            </label>
+            <label>첫매수 LOC 여유율(%) <input type="number" step="0.1" name="first_loc_buffer_pct" value="{first_loc_buffer_pct}"></label>
+        </div>
+        <p class="small-note">
+            Step24A: 라오어 무한매수법 4.0 원문기반 새 엔진입니다.<br>
+            첫매수는 전날종가보다 일반적으로 10~15% 큰 값으로 LOC 시도합니다. 기본값은 12%입니다.<br>
+            일일매수시도액 = 잔금 / (분할수 - T), 전반전은 별지점/큰수 LOC 0.5T + 평단 LOC 0.5T로 처리합니다.<br>
+            별% 공식은 TQQQ/SOXL의 20/40분할 원문 수식만 사용합니다. 임의 공식은 넣지 않았습니다.
+        </p>
+        """
+
+    elif strategy == "raor4_step24b":
+        # Step24B: Step24A 기반 후반전/소진모드/T추적 확장 엔진
+        if infinite_split_count not in [20, 40]:
+            infinite_split_count = 40
+        split_count = infinite_split_count
+        bt, trade_df = run_raor_infinite4_step24b_backtest(
+            ticker=ticker,
+            split_count=infinite_split_count,
+            first_loc_buffer_pct=first_loc_buffer_pct,
+            fee_rate_pct=fee_percent,
+        )
+        strategy_name = "라오어 무한매수4.0 원문엔진 / Step24B"
+        strategy_inputs = f"""
+        <div class="input-row">
+            <label>분할횟수
+                <select name="infinite_split_count">
+                    <option value="20" {"selected" if infinite_split_count == 20 else ""}>20</option>
+                    <option value="40" {"selected" if infinite_split_count == 40 else ""}>40</option>
+                </select>
+            </label>
+            <label>첫매수 LOC 여유율(%) <input type="number" step="0.1" name="first_loc_buffer_pct" value="{first_loc_buffer_pct}"></label>
+        </div>
+        <p class="small-note">
+            Step24B: Step24A 기반 확장 엔진입니다.<br>
+            후반전/소진모드 분기, 쿼터매도 LOC, 후반전 지정가매도 분기, TBefore/TAfter/TDelta/OrderPlan 로그를 추가했습니다.<br>
+            원문에 없는 30분할 공식과 세부 사다리 수량표는 임의로 넣지 않았습니다.
+        </p>
+        """
+
+
+
+    elif strategy == "raor4_step24c":
+        # Step24C: Step24B 기반 + 매수일 표시 보정 + 완료 주기별 손익 집계
+        if infinite_split_count not in [20, 40]:
+            infinite_split_count = 40
+        split_count = infinite_split_count
+        bt, trade_df = run_raor_infinite4_step24c_backtest(
+            ticker=ticker,
+            split_count=infinite_split_count,
+            first_loc_buffer_pct=first_loc_buffer_pct,
+            fee_rate_pct=fee_percent,
+        )
+        strategy_name = "라오어 무한매수4.0 원문엔진 / Step24C"
+        strategy_inputs = f"""
+        <div class="input-row">
+            <label>분할횟수
+                <select name="infinite_split_count">
+                    <option value="20" {"selected" if infinite_split_count == 20 else ""}>20</option>
+                    <option value="40" {"selected" if infinite_split_count == 40 else ""}>40</option>
+                </select>
+            </label>
+            <label>첫매수 LOC 여유율(%) <input type="number" step="0.1" name="first_loc_buffer_pct" value="{first_loc_buffer_pct}"></label>
+        </div>
+        <p class="small-note">
+            Step24C: Step24B 기반에서 매매로그 매수일 고정 문제를 보정했습니다.<br>
+            부분매도 로그의 매수일은 마지막 실제 매수체결일로 표시하고, 무한매수 주기 시작일은 CycleStartDate로 별도 기록합니다.<br>
+            기간 설정은 엔진 실행 데이터에 직접 적용하며, 완료된 무한매수 주기 수와 주기별 손익을 아래에 표시합니다.
+        </p>
+        """
+
+
+
+    elif strategy == "raor4_step24m":
+        # Step24M: Step24L 기반 + 검증 카운터/Step24 전용 최적화 준비
+        if infinite_split_count not in [20, 40]:
+            infinite_split_count = 40
+        split_count = infinite_split_count
+        if designated_sell_pct <= 0:
+            designated_sell_pct = default_designated_sell_pct
+
+        bt, trade_df = run_raor_infinite4_step24m_backtest(
+            ticker=ticker,
+            split_count=infinite_split_count,
+            first_loc_buffer_pct=first_loc_buffer_pct,
+            designated_sell_pct_override=designated_sell_pct,
+            fee_rate_pct=fee_percent,
+        )
+        strategy_name = "라오어 무한매수4.0 원문엔진 / Step24M"
+        strategy_inputs = f"""
+        <div class="input-row">
+            <label>분할횟수
+                <select name="infinite_split_count">
+                    <option value="20" {"selected" if infinite_split_count == 20 else ""}>20</option>
+                    <option value="40" {"selected" if infinite_split_count == 40 else ""}>40</option>
+                </select>
+            </label>
+            <label>첫매수 LOC 여유율(%) <input type="number" step="0.1" name="first_loc_buffer_pct" value="{first_loc_buffer_pct}"></label>
+            <label>전량매도 지정가(평단 대비 %)
+                <input type="number" step="0.1" min="0.1" name="designated_sell_pct" value="{designated_sell_pct}">
+            </label>
+        </div>
+        <p class="small-note">
+            Step24M: Step24L 체결 가격분리 구조를 유지하고, 가격겹침 오류/일봉 선후관계 불명/전량매도 완료누락 카운터를 추가했습니다.<br>
+            다음 단계에서 Step24 전용 Optimizer TOP100/DeepMining TOP50을 만들기 위한 검증판입니다.
+        </p>
+        """
+
+    elif strategy == "raor4_step24l":
+        # Step24L: Step24H 기반 + 별LOC 매수가/매도가 가격분리 및 일봉 선후관계 분리 로그
+        if infinite_split_count not in [20, 40]:
+            infinite_split_count = 40
+        split_count = infinite_split_count
+        if designated_sell_pct <= 0:
+            designated_sell_pct = default_designated_sell_pct
+
+        bt, trade_df = run_raor_infinite4_step24l_backtest(
+            ticker=ticker,
+            split_count=infinite_split_count,
+            first_loc_buffer_pct=first_loc_buffer_pct,
+            designated_sell_pct_override=designated_sell_pct,
+            fee_rate_pct=fee_percent,
+        )
+        strategy_name = "라오어 무한매수4.0 원문엔진 / Step24L"
+        strategy_inputs = f"""
+        <div class="input-row">
+            <label>분할횟수
+                <select name="infinite_split_count">
+                    <option value="20" {"selected" if infinite_split_count == 20 else ""}>20</option>
+                    <option value="40" {"selected" if infinite_split_count == 40 else ""}>40</option>
+                </select>
+            </label>
+            <label>첫매수 LOC 여유율(%) <input type="number" step="0.1" name="first_loc_buffer_pct" value="{first_loc_buffer_pct}"></label>
+            <label>전량매도 지정가(평단 대비 %)
+                <input type="number" step="0.1" min="0.1" name="designated_sell_pct" value="{designated_sell_pct}">
+            </label>
+        </div>
+        <p class="small-note">
+            Step24L: 별LOC 매수가는 별지점-0.01, 별LOC 매도가는 별지점으로 고정합니다.<br>
+            BuySellPriceOverlap은 가격 겹침 오류 검증용이고, 정상이라면 False여야 합니다.<br>
+            DailyCandleOrderAmbiguous는 가격 겹침이 아니라 일봉 OHLC만으로 장중 선후관계를 확정할 수 없는 구간입니다.
+        </p>
+        """
+
+    elif strategy == "raor4_step24h":
+        # Step24H: Step24G 기반 + 같은 날 지정가/별LOC/매수LOC 체결신호 검증 강화
+        if infinite_split_count not in [20, 40]:
+            infinite_split_count = 40
+        split_count = infinite_split_count
+        if designated_sell_pct <= 0:
+            designated_sell_pct = default_designated_sell_pct
+
+        bt, trade_df = run_raor_infinite4_step24h_backtest(
+            ticker=ticker,
+            split_count=infinite_split_count,
+            first_loc_buffer_pct=first_loc_buffer_pct,
+            designated_sell_pct_override=designated_sell_pct,
+            fee_rate_pct=fee_percent,
+        )
+        strategy_name = "라오어 무한매수4.0 원문엔진 / Step24H"
+        strategy_inputs = f"""
+        <div class="input-row">
+            <label>분할횟수
+                <select name="infinite_split_count">
+                    <option value="20" {"selected" if infinite_split_count == 20 else ""}>20</option>
+                    <option value="40" {"selected" if infinite_split_count == 40 else ""}>40</option>
+                </select>
+            </label>
+            <label>첫매수 LOC 여유율(%) <input type="number" step="0.1" name="first_loc_buffer_pct" value="{first_loc_buffer_pct}"></label>
+            <label>전량매도 지정가(평단 대비 %)
+                <input type="number" step="0.1" min="0.1" name="designated_sell_pct" value="{designated_sell_pct}">
+            </label>
+        </div>
+        <p class="small-note">
+            Step24H: Step24G의 매일 매도예약 구조를 유지하고, 같은 날 지정가매도/별LOC매도/LOC매수 신호가 겹치는 날을 로그에 표시합니다.<br>
+            일봉 백테스트는 장중 순서를 알 수 없으므로 SameDayMultiSignal=True 구간은 원문 체결 흐름 검증 대상으로 봅니다.<br>
+            딥마이닝 TOP50/Optimizer TOP100은 아직 라오어 Step24H 전용 최적화 결과가 없으면 예전 RSI 결과를 섞지 않고 안내문만 표시합니다.
+        </p>
+        """
+
+    elif strategy == "raor4_step24g":
+        # Step24G: Step24F 기반 + 지정가 전량매도 수익률 커스텀 입력
+        if infinite_split_count not in [20, 40]:
+            infinite_split_count = 40
+        split_count = infinite_split_count
+
+        # 사용자가 직접 입력하는 전량매도 지정가 수익률.
+        # 빈 값/0 이하/비정상 입력은 원문 기본값(TQQQ 15%, SOXL 20%)으로 복귀.
+        if designated_sell_pct <= 0:
+            designated_sell_pct = default_designated_sell_pct
+
+        bt, trade_df = run_raor_infinite4_step24g_backtest(
+            ticker=ticker,
+            split_count=infinite_split_count,
+            first_loc_buffer_pct=first_loc_buffer_pct,
+            designated_sell_pct_override=designated_sell_pct,
+            fee_rate_pct=fee_percent,
+        )
+        strategy_name = "라오어 무한매수4.0 원문엔진 / Step24G"
+        strategy_inputs = f"""
+        <div class="input-row">
+            <label>분할횟수
+                <select name="infinite_split_count">
+                    <option value="20" {"selected" if infinite_split_count == 20 else ""}>20</option>
+                    <option value="40" {"selected" if infinite_split_count == 40 else ""}>40</option>
+                </select>
+            </label>
+            <label>첫매수 LOC 여유율(%) <input type="number" step="0.1" name="first_loc_buffer_pct" value="{first_loc_buffer_pct}"></label>
+            <label>전량매도 지정가(평단 대비 %)
+                <input type="number" step="0.1" min="0.1" name="designated_sell_pct" value="{designated_sell_pct}">
+            </label>
+        </div>
+        <p class="small-note">
+            Step24G: Step24F의 매일 매도예약 구조를 유지하고, 전량매도 지정가 수익률을 직접 입력할 수 있게 했습니다.<br>
+            원문 기본값은 TQQQ 15%, SOXL 20%입니다. 입력값을 바꾸면 75% 지정가 전량매도 기준만 바뀌고, 별LOC 25% 예약 구조는 유지됩니다.<br>
+            별LOC 매도점이 지정가보다 높게 계산되면 로그에 경고를 남깁니다.
+        </p>
+        """
+
+    elif strategy == "raor4_step24f":
+        # Step24F: Step24E 기반 + 지정가 전량매도 수익률 드롭다운 + 매도예약 검증
+        if infinite_split_count not in [20, 40]:
+            infinite_split_count = 40
+        split_count = infinite_split_count
+        bt, trade_df = run_raor_infinite4_step24f_backtest(
+            ticker=ticker,
+            split_count=infinite_split_count,
+            first_loc_buffer_pct=first_loc_buffer_pct,
+            designated_sell_pct_override=designated_sell_pct,
+            fee_rate_pct=fee_percent,
+        )
+        strategy_name = "라오어 무한매수4.0 원문엔진 / Step24F"
+        designated_options = "".join([
+            f'<option value="{v}" {"selected" if abs(designated_sell_pct - v) < 1e-9 else ""}>{v:g}%</option>'
+            for v in [10.0, 12.0, 15.0, 20.0, 25.0, 30.0]
+        ])
+        strategy_inputs = f"""
+        <div class="input-row">
+            <label>분할횟수
+                <select name="infinite_split_count">
+                    <option value="20" {"selected" if infinite_split_count == 20 else ""}>20</option>
+                    <option value="40" {"selected" if infinite_split_count == 40 else ""}>40</option>
+                </select>
+            </label>
+            <label>첫매수 LOC 여유율(%) <input type="number" step="0.1" name="first_loc_buffer_pct" value="{first_loc_buffer_pct}"></label>
+            <label>전량매도 지정가(평단 대비 %)
+                <select name="designated_sell_pct">{designated_options}</select>
+            </label>
+        </div>
+        <p class="small-note">
+            Step24F: Step24E의 매일 매도예약 구조를 유지하고, 전량매도 지정가 수익률을 드롭다운으로 비교할 수 있게 했습니다.<br>
+            원문 기본값은 TQQQ 15%, SOXL 20%입니다. 별LOC 매도점이 지정가보다 높게 계산되면 로그에 경고를 남깁니다.<br>
+            같은 날 둘 다 충족은 ‘고가가 지정가 이상이고 종가가 별LOC 이상’이라는 뜻이며, 별LOC가 지정가보다 높다는 의미가 아닙니다.
+        </p>
+        """
+
+    elif strategy == "raor4_step24e":
+        # Step24E: 매일 매도예약 원문 보강 + 지정가 75%/별LOC 25% 동시 예약
+        if infinite_split_count not in [20, 40]:
+            infinite_split_count = 40
+        split_count = infinite_split_count
+        bt, trade_df = run_raor_infinite4_step24e_backtest(
+            ticker=ticker,
+            split_count=infinite_split_count,
+            first_loc_buffer_pct=first_loc_buffer_pct,
+            fee_rate_pct=fee_percent,
+        )
+        strategy_name = "라오어 무한매수4.0 원문엔진 / Step24E"
+        strategy_inputs = f"""
+        <div class="input-row">
+            <label>분할횟수
+                <select name="infinite_split_count">
+                    <option value="20" {"selected" if infinite_split_count == 20 else ""}>20</option>
+                    <option value="40" {"selected" if infinite_split_count == 40 else ""}>40</option>
+                </select>
+            </label>
+            <label>첫매수 LOC 여유율(%) <input type="number" step="0.1" name="first_loc_buffer_pct" value="{first_loc_buffer_pct}"></label>
+        </div>
+        <p class="small-note">
+            Step24E: 매도는 전반전/후반전 공통으로 매일 예약합니다.<br>
+            보유수량 1/4은 별지점 LOC 매도, 나머지 3/4은 TQQQ +15% / SOXL +20% 지정가 매도로 계산합니다.<br>
+            같은 날 지정가와 별LOC가 모두 충족되면 지정가 75% 체결 후 남은 25% 별LOC 체결로 주기 완료 처리합니다.
+        </p>
+        """
+
+
+    elif strategy == "raor4_step24d":
+        # Step24D: Step24C 기반 + 완료주기 0 고정 보정 + 로그/검증 화면 강화
+        if infinite_split_count not in [20, 40]:
+            infinite_split_count = 40
+        split_count = infinite_split_count
+        bt, trade_df = run_raor_infinite4_step24d_backtest(
+            ticker=ticker,
+            split_count=infinite_split_count,
+            first_loc_buffer_pct=first_loc_buffer_pct,
+            fee_rate_pct=fee_percent,
+        )
+        strategy_name = "라오어 무한매수4.0 원문엔진 / Step24D"
+        strategy_inputs = f"""
+        <div class="input-row">
+            <label>분할횟수
+                <select name="infinite_split_count">
+                    <option value="20" {"selected" if infinite_split_count == 20 else ""}>20</option>
+                    <option value="40" {"selected" if infinite_split_count == 40 else ""}>40</option>
+                </select>
+            </label>
+            <label>첫매수 LOC 여유율(%) <input type="number" step="0.1" name="first_loc_buffer_pct" value="{first_loc_buffer_pct}"></label>
+        </div>
+        <p class="small-note">
+            Step24D: Step24C 기반에서 완료 주기 0 고정 문제를 보정했습니다.<br>
+            bt의 CycleId 진행값으로 완료 주기를 재계산하고, 매매로그/원문 검증 체크리스트/주기 상세 분석을 추가했습니다.<br>
+            원문에 없는 30분할 공식과 세부 사다리 수량표는 임의로 넣지 않았습니다.
+        </p>
+        """
+
 
     else:
         return "지원하지 않는 전략입니다."
@@ -1847,6 +3067,17 @@ def home():
     trades_per_year = trade_summary["trades_per_year"]
     open_position = trade_summary["open_position"]
     max_split = trade_summary["max_split"]
+    cycle_status = make_cycle_status(trade_df, bt, split_count)
+    completed_cycles = cycle_status["completed_cycles"]
+    completed_profit = cycle_status["completed_profit"]
+    active_cycle_label = cycle_status["active_cycle_label"]
+    active_t = cycle_status["active_t"]
+    active_progress_pct = cycle_status["active_progress_pct"]
+    active_remaining_t = cycle_status["active_remaining_t"]
+    active_days = cycle_status["active_days"]
+    cycle_detail = make_cycle_detail_summary(trade_df, bt, split_count, cycle_status)
+    raor_validation_html = make_raor_validation_html(bt, trade_df, ticker, split_count) if str(strategy).startswith("raor4_step24") else ""
+    step24m_execution_html = make_step24m_execution_validation_html(bt, trade_df) if strategy == "raor4_step24m" else ""
 
 
     # =========================
@@ -2030,11 +3261,87 @@ def home():
     # 매매로그
 
     # =========================
+
+
+    # Step24D: 무한매수 완료/진행 주기별 손익 집계
+    cycle_summary_html = ""
+    if "CycleId" in bt.columns:
+        cycle_rows = ""
+        completed_n = int(completed_cycles or 0)
+        completed_id_set = set(range(1, completed_n + 1))
+        total_cycle_profit = float(completed_profit or 0)
+        if completed_n > 0:
+            source_cycles = sorted(completed_id_set)
+            for cid in source_cycles[-100:]:
+                g_bt = bt[pd.to_numeric(bt["CycleId"], errors="coerce").fillna(0).astype(int) == cid].copy()
+                g_tr = trade_df[pd.to_numeric(trade_df["CycleId"], errors="coerce").fillna(0).astype(int) == cid].copy() if (trade_df is not None and not trade_df.empty and "CycleId" in trade_df.columns) else pd.DataFrame()
+                start_v = g_bt["Date"].min() if not g_bt.empty else (g_tr["CycleStartDate"].dropna().iloc[0] if not g_tr.empty and "CycleStartDate" in g_tr.columns and not g_tr["CycleStartDate"].dropna().empty else pd.NaT)
+                end_v = g_bt["Date"].max() if not g_bt.empty else (g_tr["SellDate"].max() if not g_tr.empty and "SellDate" in g_tr.columns else pd.NaT)
+                profit_v = float(g_tr["Profit"].fillna(0).sum()) if not g_tr.empty and "Profit" in g_tr.columns else 0.0
+                buy_v = float(g_tr["BuyAmount"].fillna(0).sum()) if not g_tr.empty and "BuyAmount" in g_tr.columns else 0.0
+                sell_v = float(g_tr["SellAmount"].fillna(0).sum()) if not g_tr.empty and "SellAmount" in g_tr.columns else 0.0
+                ret_v = (profit_v / buy_v * 100) if buy_v > 0 else 0.0
+                days_v = (pd.to_datetime(end_v) - pd.to_datetime(start_v)).days if pd.notna(start_v) and pd.notna(end_v) else 0
+                max_t_v = float(g_bt["T" if "T" in g_bt.columns else "CurrentSplit"].max()) if not g_bt.empty else 0.0
+                cycle_rows += f"""
+                <tr>
+                    <td>{int(cid)}</td>
+                    <td>{pd.to_datetime(start_v).strftime("%Y-%m-%d") if pd.notna(start_v) else ""}</td>
+                    <td>{pd.to_datetime(end_v).strftime("%Y-%m-%d") if pd.notna(end_v) else ""}</td>
+                    <td>{days_v}</td>
+                    <td>{max_t_v:.1f}T</td>
+                    <td>{buy_v:,.0f}</td>
+                    <td>{sell_v:,.0f}</td>
+                    <td>{profit_v:,.0f}</td>
+                    <td>{ret_v:.2f}%</td>
+                    <td>{len(g_tr) if not g_tr.empty else 0}</td>
+                </tr>
+                """
+            cycle_summary_html = f"""
+            <div class="card">
+                <h2>Step24D 무한매수 주기 상세 분석</h2>
+                <div class="grid mini-grid">
+                    <div class="metric positive"><h3>완료 주기</h3><p>{completed_n}회</p></div>
+                    <div class="metric warning"><h3>진행 중 주기</h3><p>{active_cycle_label}</p></div>
+                    <div class="metric"><h3>평균 주기일수</h3><p>{cycle_detail['avg_cycle_days']:.1f}일</p></div>
+                    <div class="metric"><h3>최장/최단</h3><p>{cycle_detail['max_cycle_days']} / {cycle_detail['min_cycle_days']}일</p></div>
+                    <div class="metric"><h3>평균 주기수익률</h3><p>{cycle_detail['avg_cycle_return']:.2f}%</p></div>
+                    <div class="metric"><h3>최대 소진T</h3><p>{cycle_detail['max_used_t']:.1f}T</p></div>
+                    <div class="metric"><h3>후반전 진입</h3><p>{cycle_detail['second_half_count']}회</p></div>
+                    <div class="metric"><h3>소진모드 진입</h3><p>{cycle_detail['exhaust_count']}회</p></div>
+                    <div class="metric"><h3>쿼터매도</h3><p>{cycle_detail['quarter_sell_count']}회</p></div>
+                    <div class="metric"><h3>완료손익</h3><p>{total_cycle_profit:,.0f}원</p></div>
+                </div>
+                <div class="table-wrap">
+                    <table border="1" cellpadding="6" cellspacing="0">
+                        <tr>
+                            <th>주기</th><th>시작일</th><th>종료/마지막일</th><th>주기일수</th><th>최대T</th>
+                            <th>매수원금</th><th>매도금액</th><th>손익</th><th>수익률</th><th>매도로그수</th>
+                        </tr>
+                        {cycle_rows}
+                    </table>
+                </div>
+                <p class="small-note">※ 완료 주기는 trade_df의 CycleCompleted가 비어도 bt의 CycleId 진행값으로 보정 계산합니다.</p>
+            </div>
+            """
+        else:
+            cycle_summary_html = f"""
+            <div class="card">
+                <h2>Step24D 무한매수 주기 상세 분석</h2>
+                <p>선택 기간 안에서 완전히 종료된 무한매수 주기는 아직 없습니다.</p>
+                <p>현재 진행 중 주기: <b>{active_cycle_label}</b></p>
+                <p>진행 분할: <b>{active_t:.1f}/{split_count}T ({active_progress_pct:.1f}%)</b></p>
+                <p class="small-note">※ 이번 버전부터 완료 주기 0 고정 문제를 방지하기 위해 bt의 CycleId 진행값으로도 보정합니다.</p>
+            </div>
+            """
+
     trade_rows = ""
     if not trade_df.empty:
         for _, row in trade_df.tail(20).sort_values("SellDate", ascending=False).iterrows():
             trade_rows += f"""
             <tr>
+                <td>{row.get("CycleId", "")}</td>
+                <td>{row.get("CycleStartDate", "")}</td>
                 <td>{row.get("BuyDate", "")}</td>
                 <td>{row.get("SellDate", "")}</td>
                 <td>{row.get("HoldDays", 0)}</td>
@@ -2066,6 +3373,8 @@ def home():
         <div class="table-wrap">
             <table border="1" cellpadding="6" cellspacing="0">
                 <tr>
+                    <th>주기</th>
+                    <th>주기시작일</th>
                     <th>매수일</th>
                     <th>매도일</th>
                     <th>보유일</th>
@@ -2133,6 +3442,37 @@ def home():
     bh_class = cls_positive_negative(bh_return)
     open_class = cls_open_position(open_position)
     pf_class = "positive" if profit_factor >= 1.5 else "warning" if profit_factor >= 1 else "negative"
+
+    # Step24D UI 보강: 브라우저 기본 date picker의 연도 스크롤이 둔감해서
+    # 연/월/일을 직접 선택하는 커스텀 날짜 선택 UI를 사용한다.
+    data_min_year = int(_daily_full_for_notice["Date"].min().year)
+    data_max_year = int(_daily_full_for_notice["Date"].max().year)
+
+    def _date_parts(date_str):
+        dt = pd.to_datetime(date_str, errors="coerce")
+        if pd.isna(dt):
+            dt = _daily_full_for_notice["Date"].min()
+        return int(dt.year), int(dt.month), int(dt.day)
+
+    def _select_options(values, selected_value, suffix=""):
+        html_parts = []
+        for v in values:
+            selected_attr = "selected" if int(v) == int(selected_value) else ""
+            html_parts.append(f'<option value="{int(v)}" {selected_attr}>{int(v)}{suffix}</option>')
+        return "".join(html_parts)
+
+    start_y, start_m, start_d = _date_parts(start_date)
+    end_y, end_m, end_d = _date_parts(end_date)
+    year_values = list(range(data_min_year, data_max_year + 1))
+    month_values = list(range(1, 13))
+    day_values = list(range(1, 32))
+
+    start_year_options = _select_options(year_values, start_y, "")
+    end_year_options = _select_options(year_values, end_y, "")
+    start_month_options = _select_options(month_values, start_m, "월")
+    end_month_options = _select_options(month_values, end_m, "월")
+    start_day_options = _select_options(day_values, start_d, "일")
+    end_day_options = _select_options(day_values, end_d, "일")
 
     html = f"""
 <html>
@@ -2228,6 +3568,15 @@ def home():
             margin: 4px;
             border: 1px solid #d1d5db;
             border-radius: 6px;
+        }}
+        .date-row select {{
+            min-width: 74px;
+        }}
+        .date-row label {{
+            background: #f9fafb;
+            border: 1px solid #e5e7eb;
+            border-radius: 10px;
+            padding: 6px 8px;
         }}
         button {{
             cursor: pointer;
@@ -2349,22 +3698,55 @@ def home():
             </label>
         </div>
 
-        <div class="input-row">
-            <label>시작일 <input type="date" name="start_date" value="{start_date}"></label>
-            <label>종료일 <input type="date" name="end_date" value="{end_date}"></label>
+        <div class="input-row date-row">
+            <input type="hidden" id="start_date" name="start_date" value="{start_date}">
+            <input type="hidden" id="end_date" name="end_date" value="{end_date}">
+
+            <label>시작일
+                <select id="start_y" onchange="syncDateParts('start')">{start_year_options}</select>
+                <select id="start_m" onchange="syncDateParts('start')">{start_month_options}</select>
+                <select id="start_d" onchange="syncDateParts('start')">{start_day_options}</select>
+            </label>
+
+            <label>종료일
+                <select id="end_y" onchange="syncDateParts('end')">{end_year_options}</select>
+                <select id="end_m" onchange="syncDateParts('end')">{end_month_options}</select>
+                <select id="end_d" onchange="syncDateParts('end')">{end_day_options}</select>
+            </label>
+
             <label>수수료율(%) <input type="number" step="0.001" name="fee_percent" value="{fee_percent}"></label>
-            <span class="small-note">예: 0.25 입력 = 매수 0.25% + 매도 0.25%</span>
+            <span class="small-note">연도는 드롭다운으로 바로 선택됩니다. 예: 0.25 입력 = 매수 0.25% + 매도 0.25%</span>
         </div>
 
         <div class="input-row">
             <label>전략 선택
-                <select name="strategy">
-                    <option value="rsi" {"selected" if strategy == "rsi" else ""}>RSI 커스텀</option>
-                    <option value="original" {"selected" if strategy == "original" else ""}>오리지널</option>
-                    <option value="original_upgrade" {"selected" if strategy == "original_upgrade" else ""}>오리지널 2.0</option>
-                    <option value="infinite4" {"selected" if strategy == "infinite4" else ""}>무한매수 4.0 v0</option>
-                    <option value="tteolsa" disabled>떨사오팔 준비중</option>
-                    <option value="jongsajongpal" disabled>종사종팔 준비중</option>
+                <select name="strategy" onchange="syncAllDates(); this.form.submit()">
+                    <optgroup label="현재 사용">
+                        <option value="rsi" {"selected" if strategy == "rsi" else ""}>RSI 커스텀</option>
+                        <option value="raor4_step24m" {"selected" if strategy == "raor4_step24m" else ""}>라오어 무한매수4.0 원문엔진 / Step24M</option>
+                        <option value="raor4_step24l" {"selected" if strategy == "raor4_step24l" else ""}>라오어 무한매수4.0 원문엔진 / Step24L</option>
+                        <option value="raor4_step24h" {"selected" if strategy == "raor4_step24h" else ""}>라오어 무한매수4.0 원문엔진 / Step24H</option>
+                        <option value="raor4_step24g" {"selected" if strategy == "raor4_step24g" else ""}>라오어 무한매수4.0 원문엔진 / Step24G</option>
+                        <option value="raor4_step24f" {"selected" if strategy == "raor4_step24f" else ""}>라오어 무한매수4.0 원문엔진 / Step24F</option>
+                        <option value="raor4_step24e" {"selected" if strategy == "raor4_step24e" else ""}>라오어 무한매수4.0 원문엔진 / Step24E</option>
+                        <option value="raor4_step24d" {"selected" if strategy == "raor4_step24d" else ""}>라오어 무한매수4.0 원문엔진 / Step24D</option>
+                        <option value="raor4_step24c" {"selected" if strategy == "raor4_step24c" else ""}>라오어 무한매수4.0 원문엔진 / Step24C</option>
+                        <option value="raor4_step24b" {"selected" if strategy == "raor4_step24b" else ""}>라오어 무한매수4.0 원문엔진 / Step24B</option>
+                        <option value="raor4_original" {"selected" if strategy == "raor4_original" else ""}>라오어 무한매수4.0 원문엔진 / Step24A</option>
+                    </optgroup>
+                    <optgroup label="이전 연구용">
+                        <option value="infinite4_v5" {"selected" if strategy == "infinite4_v5" else ""}>무한매수 4.0 V5 / Step23E 동적별지점</option>
+                        <option value="infinite4_v4" {"selected" if strategy == "infinite4_v4" else ""}>무한매수 4.0 V4 / Step23A-B-C</option>
+                        <option value="infinite4_v3" {"selected" if strategy == "infinite4_v3" else ""}>무한매수 4.0 V3</option>
+                        <option value="infinite4_v2" {"selected" if strategy == "infinite4_v2" else ""}>무한매수 4.0 V2</option>
+                        <option value="infinite4" {"selected" if strategy == "infinite4" else ""}>무한매수 4.0 V1</option>
+                        <option value="original_upgrade" {"selected" if strategy == "original_upgrade" else ""}>오리지널 2.0</option>
+                        <option value="original" {"selected" if strategy == "original" else ""}>오리지널</option>
+                    </optgroup>
+                    <optgroup label="준비중">
+                        <option value="tteolsa" disabled>떨사오팔 준비중</option>
+                        <option value="jongsajongpal" disabled>종사종팔 준비중</option>
+                    </optgroup>
                 </select>
             </label>
         </div>
@@ -2390,6 +3772,9 @@ def home():
 
 <div class="grid">
     <div class="metric {return_class}"><h3>최종자산</h3><p>{final_asset:,.0f}원</p></div>
+    <div class="metric positive"><h3>완료 주기</h3><p>{completed_cycles}회</p></div>
+    <div class="metric {open_class}"><h3>진행 회차</h3><p>{active_cycle_label}</p></div>
+    <div class="metric {open_class}"><h3>진행 분할</h3><p>{active_t:.1f}/{split_count}T · {active_progress_pct:.1f}%</p></div>
     <div class="metric {return_class}"><h3>총수익률</h3><p>{return_rate:.2f}%</p></div>
     <div class="metric {cagr_class}"><h3>CAGR</h3><p>{cagr:.2f}%</p></div>
     <div class="metric {mdd_class}"><h3>MDD</h3><p>{mdd:.2f}%</p></div>
@@ -2401,6 +3786,8 @@ def home():
     <div class="metric"><h3>연평균거래</h3><p>{trades_per_year:.2f}회</p></div>
 
     <div class="metric {open_class}"><h3>현재 미청산</h3><p>{open_position}</p></div>
+    <div class="metric"><h3>남은 분할</h3><p>{active_remaining_t:.1f}T</p></div>
+    <div class="metric"><h3>진행 보유일</h3><p>{active_days}일</p></div>
     <div class="metric"><h3>최대분할</h3><p>{max_split:.1f}</p></div>
 
     <div class="metric {bh_class}"><h3>Buy&Hold</h3><p>{bh_return:.2f}%</p></div>
@@ -2444,6 +3831,12 @@ def home():
     <p>수수료율: 매수 {fee_percent:.3f}% / 매도 {fee_percent:.3f}%</p>
 </div>
 
+{raor_validation_html}
+
+{step24m_execution_html}
+
+{cycle_summary_html}
+
 {trade_log_html}
 
 <div class="card">
@@ -2469,6 +3862,33 @@ def home():
 
 <script>
 const chartData = {chart_json};
+
+function pad2(value) {{
+    return String(value).padStart(2, "0");
+}}
+
+function daysInMonth(year, month) {{
+    return new Date(Number(year), Number(month), 0).getDate();
+}}
+
+function syncDateParts(prefix) {{
+    const y = document.getElementById(prefix + "_y");
+    const m = document.getElementById(prefix + "_m");
+    const d = document.getElementById(prefix + "_d");
+    const hidden = document.getElementById(prefix + "_date");
+    if (!y || !m || !d || !hidden) return;
+
+    const maxDay = daysInMonth(y.value, m.value);
+    if (Number(d.value) > maxDay) d.value = String(maxDay);
+    hidden.value = `${{y.value}}-${{pad2(m.value)}}-${{pad2(d.value)}}`;
+}}
+
+function syncAllDates() {{
+    syncDateParts("start");
+    syncDateParts("end");
+}}
+
+window.addEventListener("DOMContentLoaded", syncAllDates);
 
 const labels = chartData.labels || [];
 const assets = chartData.assets || [];
