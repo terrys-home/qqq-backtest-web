@@ -16,12 +16,11 @@ STRATEGY_LABELS = {
     "infinite4_v3": "무한매수4.0 V3",
     "infinite4_v4": "무한매수4.0 V4 / Step23A-B-C",
     "infinite4_v5": "무한매수4.0 V5 / Step23E 동적별지점",
-    "raor4_original": "라오어 무한매수4.0 원문엔진 / Step24A",
-    "raor4_step24b": "라오어 무한매수4.0 원문엔진 / Step24B",
-    "raor4_step24c": "라오어 무한매수4.0 원문엔진 / Step24C",
-    "raor4_step24d": "라오어 무한매수4.0 원문엔진 / Step24D",
     "raor4_step24e": "라오어 무한매수4.0 원문엔진 / Step24E",
     "raor4_step24f": "라오어 무한매수4.0 원문엔진 / Step24F",
+    "raor4_step24p": "라오어 무한매수4.0 원문엔진 / Step24P",
+    "raor4_step24o": "라오어 무한매수4.0 원문엔진 / Step24O",
+    "raor4_step24n": "라오어 무한매수4.0 원문엔진 / Step24N",
     "raor4_step24m": "라오어 무한매수4.0 원문엔진 / Step24M",
     "raor4_step24l": "라오어 무한매수4.0 원문엔진 / Step24L",
     "raor4_step24h": "라오어 무한매수4.0 원문엔진 / Step24H",
@@ -55,30 +54,6 @@ STRATEGY_PARAM_MAP = {
         "params": ["split_count", "target_profit", "quarter_sell_ratio", "star_pct", "max_gap_pct", "max_hold_days", "sheet_loc_price", "sheet_big_buy_price", "sheet_sell_price"],
         "note": "V5: 별점 입력값을 초기값으로만 쓰고 전반전/후반전/소진모드, 분할진행률, 평균단가 대비 현재가로 별지점을 자동 가변합니다.",
     },
-    "raor4_original": {
-        "label": "라오어 무한매수4.0 원문엔진 / Step24A",
-        "status": "원문기반 신규",
-        "params": ["split_count", "first_loc_buffer_pct"],
-        "note": "Step24A: T 기반 별% 공식, 첫매수 전날종가+10~15% LOC, 잔금/(분할수-T), 전반전 0.5T+0.5T 구조를 반영합니다.",
-    },
-    "raor4_step24b": {
-        "label": "라오어 무한매수4.0 원문엔진 / Step24B",
-        "status": "원문기반 확장",
-        "params": ["split_count", "first_loc_buffer_pct"],
-        "note": "Step24B: Step24A 기반에서 후반전, 소진모드, 쿼터매도 LOC, 후반전 지정가/LOC 분기, T 추적 로그를 강화합니다.",
-    },
-    "raor4_step24c": {
-        "label": "라오어 무한매수4.0 원문엔진 / Step24C",
-        "status": "원문기반 확장",
-        "params": ["split_count", "first_loc_buffer_pct"],
-        "note": "Step24C: Step24B 기반에서 매수일 표시 보정, 기간 직접 실행, 완료 주기별 손익 집계를 추가합니다.",
-    },
-    "raor4_step24d": {
-        "label": "라오어 무한매수4.0 원문엔진 / Step24D",
-        "status": "원문기반 검증",
-        "params": ["split_count", "first_loc_buffer_pct"],
-        "note": "Step24D: 완료주기 0 고정 보정, 원문검증 체크리스트, 주기별 상세 분석과 로그 컬럼을 강화합니다.",
-    },
     "raor4_step24e": {
         "label": "라오어 무한매수4.0 원문엔진 / Step24E",
         "status": "원문기반 매도예약 보강",
@@ -90,6 +65,24 @@ STRATEGY_PARAM_MAP = {
         "status": "원문기반 매도예약 검증",
         "params": ["split_count", "first_loc_buffer_pct", "designated_sell_pct"],
         "note": "Step24F: 매일 별LOC 25%와 지정가 75% 매도예약을 유지하고, 지정가 전량매도 수익률 드롭다운과 별LOC>지정가 경고 검증을 추가합니다.",
+    },
+    "raor4_step24p": {
+        "label": "라오어 무한매수4.0 원문엔진 / Step24P",
+        "status": "파라미터 세분화+진행형 UI",
+        "params": ["split_count", "first_loc_buffer_pct", "designated_sell_pct", "opt_split_values", "score_mode"],
+        "note": "Step24P: Step24O 엔진 기준으로 파라미터 세분화, 후보별 판정, 진행형 DeepMining UI, CSV 캐시 저장 구조를 추가합니다.",
+    },
+    "raor4_step24o": {
+        "label": "라오어 무한매수4.0 원문엔진 / Step24O",
+        "status": "현재 기준판+전용최적화",
+        "params": ["split_count", "first_loc_buffer_pct", "designated_sell_pct"],
+        "note": "Step24O: Step24N 기준판에 Step24 전용 Optimizer TOP100 / DeepMining TOP50 화면 실행 기능을 추가합니다.",
+    },
+    "raor4_step24n": {
+        "label": "라오어 무한매수4.0 원문엔진 / Step24N",
+        "status": "현재 기준판",
+        "params": ["split_count", "first_loc_buffer_pct", "designated_sell_pct"],
+        "note": "Step24N: Step24M 로직은 유지하고 Step24A~D 실험판을 제거한 정리판입니다.",
     },
     "raor4_step24m": {
         "label": "라오어 무한매수4.0 원문엔진 / Step24M",
@@ -200,12 +193,11 @@ for _ticker in TICKER_LIST:
     STRATEGY_PRESETS[_ticker].setdefault("infinite4_v3", DEFAULT_INFINITE4_V3_PRESET)
     STRATEGY_PRESETS[_ticker].setdefault("infinite4_v4", DEFAULT_INFINITE4_V4_PRESET)
     STRATEGY_PRESETS[_ticker].setdefault("infinite4_v5", DEFAULT_INFINITE4_V4_PRESET)
-    STRATEGY_PRESETS[_ticker].setdefault("raor4_original", DEFAULT_RAOR4_PRESET)
-    STRATEGY_PRESETS[_ticker].setdefault("raor4_step24b", DEFAULT_RAOR4_PRESET)
-    STRATEGY_PRESETS[_ticker].setdefault("raor4_step24c", DEFAULT_RAOR4_PRESET)
-    STRATEGY_PRESETS[_ticker].setdefault("raor4_step24d", DEFAULT_RAOR4_PRESET)
     STRATEGY_PRESETS[_ticker].setdefault("raor4_step24e", DEFAULT_RAOR4_PRESET)
     STRATEGY_PRESETS[_ticker].setdefault("raor4_step24f", DEFAULT_RAOR4_PRESET)
+    STRATEGY_PRESETS[_ticker].setdefault("raor4_step24p", DEFAULT_RAOR4_PRESET)
+    STRATEGY_PRESETS[_ticker].setdefault("raor4_step24o", DEFAULT_RAOR4_PRESET)
+    STRATEGY_PRESETS[_ticker].setdefault("raor4_step24n", DEFAULT_RAOR4_PRESET)
     STRATEGY_PRESETS[_ticker].setdefault("raor4_step24m", DEFAULT_RAOR4_PRESET)
     STRATEGY_PRESETS[_ticker].setdefault("raor4_step24l", DEFAULT_RAOR4_PRESET)
     STRATEGY_PRESETS[_ticker].setdefault("raor4_step24h", DEFAULT_RAOR4_PRESET)
@@ -245,7 +237,7 @@ def get_preset_query(ticker, strategy, preset_type="balanced", start_date=None, 
     params.update({k: v for k, v in preset.items() if k not in ["label", "desc"]})
 
     # app.py의 무한매수 입력명과 맞춤
-    if strategy in ["infinite4_v3", "infinite4_v4", "infinite4_v5", "raor4_original", "raor4_step24b", "raor4_step24c", "raor4_step24d", "raor4_step24e", "raor4_step24f", "raor4_step24g", "raor4_step24h", "raor4_step24l", "raor4_step24m"]:
+    if strategy in ["infinite4_v3", "infinite4_v4", "infinite4_v5", "raor4_step24e", "raor4_step24f", "raor4_step24g", "raor4_step24h", "raor4_step24l", "raor4_step24m", "raor4_step24n", "raor4_step24o", "raor4_step24p"]:
         if "split_count" in params:
             params["infinite_split_count"] = params.pop("split_count")
         if "target_profit" in params:

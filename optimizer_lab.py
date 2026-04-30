@@ -5,10 +5,10 @@ python optimizer_lab.py TQQQ rsi
 python optimizer_lab.py TQQQ infinite4_v3
 python optimizer_lab.py TQQQ infinite4_v4
 python optimizer_lab.py TQQQ infinite4_v5
-python optimizer_lab.py TQQQ raor4_original
-python optimizer_lab.py TQQQ raor4_step24b
-python optimizer_lab.py TQQQ raor4_step24c
-python optimizer_lab.py TQQQ raor4_step24d
+python optimizer_lab.py TQQQ raor4_step24p
+python optimizer_lab.py TQQQ raor4_step24o
+python optimizer_lab.py TQQQ raor4_step24n
+python optimizer_lab.py TQQQ raor4_step24m
 
 주의:
 - 자동주문/RPA 없음
@@ -83,7 +83,7 @@ def iter_params(strategy):
                 "boom_split": boom,
             }
 
-    elif strategy == "raor4_step24m":
+    elif strategy in ["raor4_step24m", "raor4_step24n", "raor4_step24o", "raor4_step24p"]:
         for vals in itertools.product(
             [20, 40],
             [10, 12, 15],
@@ -96,7 +96,7 @@ def iter_params(strategy):
                 "designated_sell_pct_override": designated_sell_pct,
             }
 
-    elif strategy in ["raor4_original", "raor4_step24b", "raor4_step24c", "raor4_step24d", "raor4_step24e", "raor4_step24f", "raor4_step24g", "raor4_step24h", "raor4_step24l"]:
+    elif strategy in ["raor4_step24e", "raor4_step24f", "raor4_step24g", "raor4_step24h", "raor4_step24l"]:
         for vals in itertools.product(
             [20, 40],      # split_count: 원문 별% 공식이 명시된 값만
             [10, 12, 15],  # first_loc_buffer_pct: 원문 첫매수 +10~15%
@@ -150,18 +150,16 @@ def run_one(strategy, params, fee_percent=0.25):
         return lab.run_infinite4_v4_backtest(fee_rate_pct=fee_percent, **params)
     if strategy == "infinite4_v5":
         return lab.run_infinite4_v5_backtest(fee_rate_pct=fee_percent, **params)
-    if strategy == "raor4_original":
-        return lab.run_raor_infinite4_backtest(ticker=lab.current_ticker if hasattr(lab, "current_ticker") else "TQQQ", fee_rate_pct=fee_percent, **params)
-    if strategy == "raor4_step24b":
-        return lab.run_raor_infinite4_step24b_backtest(ticker=lab.current_ticker if hasattr(lab, "current_ticker") else "TQQQ", fee_rate_pct=fee_percent, **params)
-    if strategy == "raor4_step24c":
-        return lab.run_raor_infinite4_step24c_backtest(ticker=lab.current_ticker if hasattr(lab, "current_ticker") else "TQQQ", fee_rate_pct=fee_percent, **params)
-    if strategy == "raor4_step24d":
-        return lab.run_raor_infinite4_step24d_backtest(ticker=lab.current_ticker if hasattr(lab, "current_ticker") else "TQQQ", fee_rate_pct=fee_percent, **params)
     if strategy == "raor4_step24e":
         return lab.run_raor_infinite4_step24e_backtest(ticker=lab.current_ticker if hasattr(lab, "current_ticker") else "TQQQ", fee_rate_pct=fee_percent, **params)
     if strategy == "raor4_step24f":
         return lab.run_raor_infinite4_step24f_backtest(ticker=lab.current_ticker if hasattr(lab, "current_ticker") else "TQQQ", fee_rate_pct=fee_percent, **params)
+    if strategy == "raor4_step24p":
+        return lab.run_raor_infinite4_step24p_backtest(ticker=lab.current_ticker if hasattr(lab, "current_ticker") else "TQQQ", fee_rate_pct=fee_percent, **params)
+    if strategy == "raor4_step24o":
+        return lab.run_raor_infinite4_step24o_backtest(ticker=lab.current_ticker if hasattr(lab, "current_ticker") else "TQQQ", fee_rate_pct=fee_percent, **params)
+    if strategy == "raor4_step24n":
+        return lab.run_raor_infinite4_step24n_backtest(ticker=lab.current_ticker if hasattr(lab, "current_ticker") else "TQQQ", fee_rate_pct=fee_percent, **params)
     if strategy == "raor4_step24m":
         return lab.run_raor_infinite4_step24m_backtest(ticker=lab.current_ticker if hasattr(lab, "current_ticker") else "TQQQ", fee_rate_pct=fee_percent, **params)
     if strategy == "raor4_step24l":
