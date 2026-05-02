@@ -1,7 +1,10 @@
-from flask import Flask, request, send_file, abort
+from flask import Flask, request, send_file, abort, jsonify, Response
 import pandas as pd
 import json
 import hashlib
+import threading
+import uuid
+import time
 from pathlib import Path
 from ticker_config import (
     TICKER_LIST,
@@ -98,6 +101,65 @@ try:
 except Exception:
     run_raor_infinite4_step24r_core = None
 
+# Step24S: Step24R 기준 + 좁은 사이드바 / 섹션 전환형 UI / 실시간 polling 준비판
+try:
+    from muhan_raor_v4_step24s_engine import run_raor_infinite4_step24p_core as run_raor_infinite4_step24s_core
+except Exception:
+    run_raor_infinite4_step24s_core = None
+
+# Step24T: Step24S 기준 + 좌측 여백 확장 / polling API 준비판
+try:
+    from muhan_raor_v4_step24t_engine import run_raor_infinite4_step24p_core as run_raor_infinite4_step24t_core
+except Exception:
+    run_raor_infinite4_step24t_core = None
+
+# Step24U: Step24T 기준 + UI 안정화 / 무체결 공백 진단 / polling 확장 준비판
+try:
+    from muhan_raor_v4_step24u_engine import run_raor_infinite4_step24p_core as run_raor_infinite4_step24u_core
+except Exception:
+    run_raor_infinite4_step24u_core = None
+
+# Step24V: Step24U 기준 + 후보 비교/실전선정판 + 정리 후보 점검판
+try:
+    from muhan_raor_v4_step24v_engine import run_raor_infinite4_step24p_core as run_raor_infinite4_step24v_core
+except Exception:
+    run_raor_infinite4_step24v_core = None
+
+# Step24W: Step24V 기준 + 과최적화 방어 Robust Mining / 구간검증 / 주변값 안정성 판
+try:
+    from muhan_raor_v4_step24w_engine import run_raor_infinite4_step24p_core as run_raor_infinite4_step24w_core
+except Exception:
+    run_raor_infinite4_step24w_core = None
+
+# Step24X: Step24W 기준 + 실제 진행형 Robust Mining / job polling / 취소·이어하기 준비판
+try:
+    from muhan_raor_v4_step24x_engine import run_raor_infinite4_step24p_core as run_raor_infinite4_step24x_core
+except Exception:
+    run_raor_infinite4_step24x_core = None
+
+# Step24Y~Step25C: 매매 엔진은 Step24X 원문엔진을 그대로 사용하고, 화면/분석 기능만 확장한다.
+run_raor_infinite4_step24y_core = run_raor_infinite4_step24x_core or run_raor_infinite4_step24w_core
+run_raor_infinite4_step24z_core = run_raor_infinite4_step24x_core or run_raor_infinite4_step24w_core
+run_raor_infinite4_step25a_core = run_raor_infinite4_step24x_core or run_raor_infinite4_step24w_core
+run_raor_infinite4_step25b_core = run_raor_infinite4_step24x_core or run_raor_infinite4_step24w_core
+run_raor_infinite4_step25c_core = run_raor_infinite4_step24x_core or run_raor_infinite4_step24w_core
+
+# Step25D-3: V2.2 통합엔진 + V4.0 원문 재검증 래퍼
+try:
+    from muhan_raor_v22_engine import run_raor_v22_core
+except Exception:
+    run_raor_v22_core = None
+
+try:
+    from muhan_raor_v4_step25d_engine import run_raor_infinite4_step25d_core
+except Exception:
+    run_raor_infinite4_step25d_core = None
+
+run_raor_infinite4_step25d_core = run_raor_infinite4_step25d_core or run_raor_infinite4_step24x_core or run_raor_infinite4_step24w_core
+
+
+STEP24X_JOBS = {}
+STEP24X_JOBS_LOCK = threading.Lock()
 
 INITIAL_CASH = 100_000_000
 
@@ -398,6 +460,149 @@ def run_raor_infinite4_step24r_backtest(**kwargs):
         **kwargs,
     )
 
+
+def run_raor_infinite4_step24s_backtest(**kwargs):
+    """Step24S: Step24R 매매엔진 그대로 + 좁은 사이드바/섹션 전환 UI 래퍼."""
+    if run_raor_infinite4_step24s_core is None:
+        raise ImportError("muhan_raor_v4_step24s_engine.py 또는 run_raor_infinite4_step24s_core를 불러오지 못했습니다.")
+    if daily is None:
+        raise ValueError("daily 데이터가 로드되지 않았습니다. load_ticker_data() 후 실행하세요.")
+    return run_raor_infinite4_step24s_core(
+        daily_df=daily,
+        initial_cash=INITIAL_CASH,
+        **kwargs,
+    )
+
+
+def run_raor_infinite4_step24t_backtest(**kwargs):
+    """Step24T: Step24S 매매엔진 그대로 + 좌측 여백 확장/polling 준비판 래퍼."""
+    if run_raor_infinite4_step24t_core is None:
+        raise ImportError("muhan_raor_v4_step24t_engine.py 또는 run_raor_infinite4_step24t_core를 불러오지 못했습니다.")
+    if daily is None:
+        raise ValueError("daily 데이터가 로드되지 않았습니다. load_ticker_data() 후 실행하세요.")
+    return run_raor_infinite4_step24t_core(
+        daily_df=daily,
+        initial_cash=INITIAL_CASH,
+        **kwargs,
+    )
+
+
+def run_raor_infinite4_step24u_backtest(**kwargs):
+    """Step24U: Step24S 매매엔진 그대로 + UI/진단/polling 확장 준비판 래퍼."""
+    if run_raor_infinite4_step24u_core is None:
+        raise ImportError("muhan_raor_v4_step24u_engine.py 또는 run_raor_infinite4_step24u_core를 불러오지 못했습니다.")
+    if daily is None:
+        raise ValueError("daily 데이터가 로드되지 않았습니다. load_ticker_data() 후 실행하세요.")
+    return run_raor_infinite4_step24u_core(
+        daily_df=daily,
+        initial_cash=INITIAL_CASH,
+        **kwargs,
+    )
+
+
+
+def run_raor_infinite4_step24v_backtest(**kwargs):
+    """Step24V: Step24U 매매엔진 그대로 + 후보 비교/실전선정/정리 후보 점검판 래퍼."""
+    if run_raor_infinite4_step24v_core is None:
+        raise ImportError("muhan_raor_v4_step24v_engine.py 또는 run_raor_infinite4_step24v_core를 불러오지 못했습니다.")
+    if daily is None:
+        raise ValueError("daily 데이터가 로드되지 않았습니다. load_ticker_data() 후 실행하세요.")
+    return run_raor_infinite4_step24v_core(
+        daily_df=daily,
+        initial_cash=INITIAL_CASH,
+        **kwargs,
+    )
+
+
+def run_raor_infinite4_step24w_backtest(**kwargs):
+    """Step24W: Step24V 매매엔진 그대로 + Robust Mining/과최적화 방어 점수판 래퍼."""
+    if run_raor_infinite4_step24w_core is None:
+        raise ImportError("muhan_raor_v4_step24w_engine.py 또는 run_raor_infinite4_step24w_core를 불러오지 못했습니다.")
+    if daily is None:
+        raise ValueError("daily 데이터가 로드되지 않았습니다. load_ticker_data() 후 실행하세요.")
+    return run_raor_infinite4_step24w_core(
+        daily_df=daily,
+        initial_cash=INITIAL_CASH,
+        **kwargs,
+    )
+
+
+def run_raor_infinite4_step24x_backtest(**kwargs):
+    """Step24X: Step24W 매매엔진 그대로 + 실제 진행형 Robust Mining/polling 래퍼."""
+    core = run_raor_infinite4_step24x_core or run_raor_infinite4_step24w_core
+    if core is None:
+        raise ImportError("muhan_raor_v4_step24x_engine.py 또는 Step24W 코어를 불러오지 못했습니다.")
+    if daily is None:
+        raise ValueError("daily 데이터가 로드되지 않았습니다. load_ticker_data() 후 실행하세요.")
+    return core(
+        daily_df=daily,
+        initial_cash=INITIAL_CASH,
+        **kwargs,
+    )
+
+
+def run_raor_infinite4_step24y_backtest(**kwargs):
+    """Step24Y: 결과 해석/후보 선택 도우미. 매매공식은 Step24X와 동일."""
+    return run_raor_infinite4_step24x_backtest(**kwargs)
+
+
+def run_raor_infinite4_step24z_backtest(**kwargs):
+    """Step24Z: 프리셋 저장/불러오기 준비판. 매매공식은 Step24X와 동일."""
+    return run_raor_infinite4_step24x_backtest(**kwargs)
+
+
+def run_raor_infinite4_step25a_backtest(**kwargs):
+    """Step25A: TQQQ/SOXL 동시 비교 준비판. 매매공식은 Step24X와 동일."""
+    return run_raor_infinite4_step24x_backtest(**kwargs)
+
+
+def run_raor_infinite4_step25b_backtest(**kwargs):
+    """Step25B: 원문/스프레드시트 교차검증 준비판. 매매공식은 Step24X와 동일."""
+    return run_raor_infinite4_step24x_backtest(**kwargs)
+
+
+def run_raor_infinite4_step25c_backtest(**kwargs):
+    """Step25C: RPA 주문 신호 출력 준비판. 매매공식은 Step24X와 동일."""
+    return run_raor_infinite4_step24x_backtest(**kwargs)
+
+def run_raor_infinite4_step25d_backtest(**kwargs):
+    """Step25D-3: V4.0 원문 재검증판. 매매공식은 Step24X와 동일, V2.2는 티커별 공식 통합 엔진으로 분리."""
+    if run_raor_infinite4_step25d_core is None:
+        raise ImportError("muhan_raor_v4_step25d_engine.py 또는 Step24X 코어를 불러오지 못했습니다.")
+    if daily is None:
+        raise ValueError("daily 데이터가 로드되지 않았습니다. load_ticker_data() 후 실행하세요.")
+    return run_raor_infinite4_step25d_core(
+        daily_df=daily,
+        initial_cash=INITIAL_CASH,
+        **kwargs,
+    )
+
+
+def run_raor_v22_backtest(**kwargs):
+    """라오어 무한매수법 V2.2 통합 엔진 래퍼. TQQQ/SOXL은 전략 분리가 아니라 티커별 공식 자동 적용."""
+    if run_raor_v22_core is None:
+        raise ImportError("muhan_raor_v22_engine.py 또는 run_raor_v22_core를 불러오지 못했습니다.")
+    if daily is None:
+        raise ValueError("daily 데이터가 로드되지 않았습니다. load_ticker_data() 후 실행하세요.")
+    return run_raor_v22_core(
+        daily_df=daily,
+        initial_cash=INITIAL_CASH,
+        **kwargs,
+    )
+
+
+
+    """Step24T: Step24S 매매엔진 그대로 + 좌측 여백 확장/polling 준비판 래퍼."""
+    if run_raor_infinite4_step24t_core is None:
+        raise ImportError("muhan_raor_v4_step24t_engine.py 또는 run_raor_infinite4_step24t_core를 불러오지 못했습니다.")
+    if daily is None:
+        raise ValueError("daily 데이터가 로드되지 않았습니다. load_ticker_data() 후 실행하세요.")
+    return run_raor_infinite4_step24t_core(
+        daily_df=daily,
+        initial_cash=INITIAL_CASH,
+        **kwargs,
+    )
+
 # =========================
 # 공통 함수
 
@@ -668,7 +873,30 @@ def calc_stability_score(train_summary, test_summary, mdd_worse):
 # 거래 요약
 
 # =========================
+
+def get_sell_trade_df(trade_df):
+    """Trade Event Log가 BUY/SELL을 모두 담을 때 성과 집계는 SELL 이벤트만 사용한다."""
+    if trade_df is None or trade_df.empty:
+        return pd.DataFrame()
+    if "EventSide" in trade_df.columns:
+        return trade_df[trade_df["EventSide"].astype(str).str.upper() == "SELL"].copy()
+    if "OrderType" in trade_df.columns:
+        mask = trade_df["OrderType"].astype(str).str.upper().eq("SELL")
+        if mask.any():
+            return trade_df[mask].copy()
+    return trade_df.copy()
+
+
+def fmt_log_date(value):
+    if value is None or value == "" or pd.isna(value):
+        return ""
+    try:
+        return pd.to_datetime(value).strftime("%Y-%m-%d")
+    except Exception:
+        return str(value)
+
 def make_trade_summary(trade_df, bt):
+    trade_df = get_sell_trade_df(trade_df)
     if trade_df.empty:
         return {
             "trade_count": 0,
@@ -758,7 +986,8 @@ def make_cycle_status(trade_df, bt, split_count):
     status["completed_cycles"] = len(completed_ids)
     if trade_df is not None and not trade_df.empty and completed_ids and "Profit" in trade_df.columns and "CycleId" in trade_df.columns:
         try:
-            status["completed_profit"] = float(trade_df[trade_df["CycleId"].isin(completed_ids)]["Profit"].fillna(0).sum())
+            sell_df = get_sell_trade_df(trade_df)
+            status["completed_profit"] = float(sell_df[sell_df["CycleId"].isin(completed_ids)]["Profit"].fillna(0).sum())
         except Exception:
             status["completed_profit"] = 0.0
 
@@ -831,10 +1060,11 @@ def make_cycle_detail_summary(trade_df, bt, split_count, cycle_status):
         detail["exhaust_count"] = int(temp.loc[temp["Mode"] == "소진모드", "CycleIdNum"].nunique())
 
     if trade_df is not None and not trade_df.empty:
-        if "Reason" in trade_df.columns:
-            detail["quarter_sell_count"] = int(trade_df["Reason"].astype(str).str.contains("쿼터", na=False).sum())
-        if "CycleId" in trade_df.columns:
-            tdf = trade_df.copy()
+        sell_events = get_sell_trade_df(trade_df)
+        if "Reason" in sell_events.columns:
+            detail["quarter_sell_count"] = int(sell_events["Reason"].astype(str).str.contains("쿼터", na=False).sum())
+        if "CycleId" in sell_events.columns:
+            tdf = sell_events.copy()
             tdf["CycleIdNum"] = pd.to_numeric(tdf["CycleId"], errors="coerce").fillna(0).astype(int)
             completed_n = int(cycle_status.get("completed_cycles", 0) or 0)
             completed_ids = set(range(1, completed_n + 1))
@@ -879,6 +1109,7 @@ def make_raor_validation_html(bt, trade_df, ticker, split_count):
     return f"""
     <div class="card">
         <h2>Step24D 원문 규칙 검증 체크리스트</h2>
+        <p class="small-note">※ Step25D-6-2부터 이 표는 실제 BUY/SELL 이벤트 기준입니다. CycleStartDate, EventDate, BuyEventDate, SellEventDate, LastBuyDate를 분리해 장기 주기가 날짜 점프처럼 보이는 문제를 줄였습니다. 승률/거래수 성과 집계는 SELL 이벤트만 사용합니다.</p>
         <div class="table-wrap">
             <table border="1" cellpadding="6" cellspacing="0">
                 <tr><th>상태</th><th>항목</th><th>판정</th><th>확인 포인트</th></tr>
@@ -955,9 +1186,135 @@ def make_step24m_execution_validation_html(bt, trade_df):
                 {latest_by_cycle_rows}
             </table>
         </div>
+
     </div>
     """
 
+
+def make_step24u_no_fill_gap_html(bt, split_count=40):
+    """Step24U: 장기 무체결/무거래 구간을 찾아 원인을 화면에서 확인한다.
+    매매 공식은 건드리지 않고, 백테스트 결과 컬럼만 분석한다.
+    """
+    if bt is None or bt.empty or "Date" not in bt.columns:
+        return ""
+    df = bt.copy().sort_values("Date").reset_index(drop=True)
+    df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
+    df = df.dropna(subset=["Date"])
+    if df.empty:
+        return ""
+
+    def _bool_col(name):
+        if name not in df.columns:
+            return pd.Series([False] * len(df), index=df.index)
+        return df[name].fillna(False).astype(bool)
+
+    action_text = df.get("Action", pd.Series([""] * len(df), index=df.index)).astype(str)
+    fill_mask = (
+        _bool_col("BuyLOCExecuted") |
+        _bool_col("SellLOCExecuted") |
+        _bool_col("DesignatedSellExecuted") |
+        action_text.str.contains("매수|매도", regex=True, na=False)
+    )
+
+    segments = []
+    start_i = None
+    last_fill_i = None
+    for i, filled in enumerate(fill_mask.tolist()):
+        if filled:
+            if start_i is not None:
+                end_i = i - 1
+                if end_i >= start_i:
+                    segments.append((start_i, end_i, last_fill_i, i))
+                start_i = None
+            last_fill_i = i
+        else:
+            if start_i is None:
+                start_i = i
+    if start_i is not None:
+        segments.append((start_i, len(df)-1, last_fill_i, None))
+
+    rows = ""
+    large_segments = []
+    for start_i, end_i, prev_i, next_i in segments:
+        trading_days = end_i - start_i + 1
+        cal_days = int((df.loc[end_i, "Date"] - df.loc[start_i, "Date"]).days)
+        if trading_days < 40 and cal_days < 70:
+            continue
+        r0 = df.loc[start_i]
+        r1 = df.loc[end_i]
+        close_v = float(r1.get("Close", 0) or 0)
+        avg_v = float(r1.get("AvgPrice", 0) or 0)
+        buy_loc = float(r1.get("BuyLOCPrice", r1.get("BuyStarPrice", 0)) or 0)
+        sell_loc = float(r1.get("SellLOCPrice", r1.get("StarPrice", 0)) or 0)
+        designated = float(r1.get("DesignatedSellPrice", r1.get("SellTargetPrice", 0)) or 0)
+        t_val = float(r1.get("T", r1.get("CurrentSplit", 0)) or 0)
+        remaining_t = float(r1.get("RemainingTAfter", max(float(split_count) - t_val, 0)) or 0)
+        phase = str(r1.get("PhaseAfter", r1.get("Mode", "")))
+        cause_parts = []
+        if avg_v > 0 and designated > 0 and close_v < designated:
+            cause_parts.append("지정가 매도 목표 미도달")
+        if sell_loc > 0 and close_v < sell_loc:
+            cause_parts.append("별LOC 매도 미체결")
+        if buy_loc > 0 and close_v > buy_loc and remaining_t > 0:
+            cause_parts.append("LOC 매수점보다 종가가 높아 추가매수 미체결")
+        if remaining_t <= 1.0:
+            cause_parts.append("남은 T 부족/소진모드권")
+        elif t_val >= float(split_count) / 2:
+            cause_parts.append("후반전 대기")
+        if not cause_parts:
+            cause_parts.append("원문 LOC/지정가 조건 미충족")
+        cause = " + ".join(dict.fromkeys(cause_parts))
+        large_segments.append((trading_days, cal_days, start_i, end_i, cause))
+        rows += f"""
+        <tr>
+            <td>{df.loc[start_i, 'Date'].strftime('%Y-%m-%d')}</td>
+            <td>{df.loc[end_i, 'Date'].strftime('%Y-%m-%d')}</td>
+            <td>{trading_days}일</td>
+            <td>{cal_days}일</td>
+            <td>{phase}</td>
+            <td>{t_val:.2f}T / 잔여 {remaining_t:.2f}T</td>
+            <td>{close_v:.2f}</td>
+            <td>{avg_v:.2f}</td>
+            <td>{buy_loc:.2f}</td>
+            <td>{sell_loc:.2f}</td>
+            <td>{designated:.2f}</td>
+            <td>{cause}</td>
+        </tr>
+        """
+
+    if not rows:
+        rows = '<tr><td colspan="12">40거래일 이상 장기 무체결 구간이 없습니다.</td></tr>'
+
+    max_trade_days = max([x[0] for x in large_segments], default=0)
+    max_cal_days = max([x[1] for x in large_segments], default=0)
+    suspect_2022 = ""
+    for trading_days, cal_days, start_i, end_i, cause in large_segments:
+        sdt = df.loc[start_i, "Date"]
+        edt = df.loc[end_i, "Date"]
+        if sdt <= pd.Timestamp("2023-05-31") and edt >= pd.Timestamp("2022-05-01"):
+            suspect_2022 = f"2022-05~2023-05 구간과 겹치는 장기 무체결 구간 확인: {sdt.strftime('%Y-%m-%d')}~{edt.strftime('%Y-%m-%d')} / {cause}"
+            break
+    if not suspect_2022:
+        suspect_2022 = "2022-05~2023-05와 겹치는 장기 무체결 구간은 현재 필터 기준에서 뚜렷하게 잡히지 않았습니다."
+
+    return f"""
+    <div class="card step24u-gap-card">
+        <h2>Step24U 무체결 공백 진단</h2>
+        <div class="grid mini-grid">
+            <div class="metric warning"><h3>최장 무체결 거래일</h3><p>{max_trade_days}일</p></div>
+            <div class="metric warning"><h3>최장 무체결 달력일</h3><p>{max_cal_days}일</p></div>
+            <div class="metric"><h3>장기 공백 구간</h3><p>{len(large_segments)}개</p></div>
+        </div>
+        <p class="small-note"><b>진단:</b> {suspect_2022}</p>
+        <p class="small-note">이 표는 원문 규칙을 바꾸지 않고 결과 로그만 읽습니다. 공백 원인은 보통 지정가/별LOC 매도 미체결, LOC 추가매수 미체결, 후반전·소진모드 대기 중 하나입니다.</p>
+        <div class="table-wrap">
+            <table border="1" cellpadding="6" cellspacing="0">
+                <tr><th>시작</th><th>끝</th><th>거래일</th><th>달력일</th><th>Phase</th><th>T</th><th>종가</th><th>평단</th><th>BuyLOC</th><th>SellLOC</th><th>지정가</th><th>추정 원인</th></tr>
+                {rows}
+            </table>
+        </div>
+    </div>
+    """
 
 
 # =========================
@@ -2436,7 +2793,7 @@ def run_step24p_screen_optimizer(ticker, fee_percent, mode="optimizer", split_va
     """Step24 전용 Optimizer/DeepMining 실행. Step24Q는 캐시 폴더를 분리해서 RSI/기존 결과와 섞이지 않게 한다."""
     grid_kwargs = dict(mode=mode, split_values_text=split_values_text, first_loc_min=first_loc_min, first_loc_max=first_loc_max, first_loc_step=first_loc_step, designated_min=designated_min, designated_max=designated_max, designated_step=designated_step)
     params_list = list(_step24p_param_grid(**grid_kwargs))
-    cache_dir = Path("step24_cache") / ("step24r" if strategy_key == "raor4_step24r" else ("step24q" if strategy_key == "raor4_step24q" else "step24p"))
+    cache_dir = Path("step24_cache") / ("step24x" if strategy_key == "raor4_step24x" else ("step24w" if strategy_key == "raor4_step24w" else ("step24v" if strategy_key == "raor4_step24v" else ("step24u" if strategy_key == "raor4_step24u" else ("step24t" if strategy_key == "raor4_step24t" else ("step24s" if strategy_key == "raor4_step24s" else ("step24r" if strategy_key == "raor4_step24r" else ("step24q" if strategy_key == "raor4_step24q" else "step24p"))))))))
     cache_dir.mkdir(parents=True, exist_ok=True)
     cache_key = _step24p_cache_key(ticker, fee_percent, mode, score_mode, {"strategy_key": strategy_key, **grid_kwargs})
     cache_file = cache_dir / f"{ticker}_{strategy_key}_{mode}_{score_mode}_{cache_key}.csv"
@@ -2478,7 +2835,7 @@ def _step24_label_class(label):
 
 
 def build_step24p_optimizer_html(ticker, fee_percent, mode="optimizer", min_cagr=0, max_mdd=100, min_win=0, min_pf=0, split_values_text="20,40", first_loc_min=10.0, first_loc_max=15.0, first_loc_step=None, designated_min=None, designated_max=None, designated_step=None, score_mode="balanced", display_limit=None, strategy_key="raor4_step24p"):
-    step_label = "Step24R" if strategy_key == "raor4_step24r" else ("Step24Q" if strategy_key == "raor4_step24q" else "Step24P")
+    step_label = "Step24X" if strategy_key == "raor4_step24x" else ("Step24W" if strategy_key == "raor4_step24w" else ("Step24V" if strategy_key == "raor4_step24v" else ("Step24U" if strategy_key == "raor4_step24u" else ("Step24T" if strategy_key == "raor4_step24t" else ("Step24S" if strategy_key == "raor4_step24s" else ("Step24R" if strategy_key == "raor4_step24r" else ("Step24Q" if strategy_key == "raor4_step24q" else "Step24P")))))))
     df, errors, cache_file, cache_hit, total_count = run_step24p_screen_optimizer(
         ticker, fee_percent, mode, split_values_text, first_loc_min, first_loc_max,
         first_loc_step, designated_min, designated_max, designated_step, score_mode, True, strategy_key
@@ -2522,6 +2879,8 @@ def build_step24p_optimizer_html(ticker, fee_percent, mode="optimizer", min_cagr
         tr_class = "top-rank" if rank == 1 else _step24_label_class(row.get("판정"))
         rows += '<tr class="%s">' % tr_class + ''.join([f'<td>{row[col]}</td>' for col in display_df.columns]) + f'<td><a class="apply-link" href="{apply_link}">적용</a></td></tr>'
 
+    compare_html = build_step24v_candidate_compare_html(display_df, ticker, fee_percent, mode=mode, strategy_key=strategy_key)
+
     return f"""
     <div id="step24-results" class="card hero step24-progress-card step24q-result-card">
         <h2>{title} 추천 1순위</h2>
@@ -2543,12 +2902,370 @@ def build_step24p_optimizer_html(ticker, fee_percent, mode="optimizer", min_cagr
         <div class="quick-apply-row">{quick_buttons}</div>
         <p class="small-note">CSV: {cache_file}</p>
     </div>
+    {compare_html}
     <div class="card step24-progress-card step24q-table-card">
         <h2>{title} 진행형 후보판정표</h2>
         <p class="small-note">{step_label}: 조건이 같으면 Step24 전용 캐시 CSV를 재사용하고, 후보별 적용 링크는 현재 설정칸에 바로 반영한 뒤 백테스트를 실행합니다.</p>
         <div class="table-wrap"><table class="step24q-table" border="1" cellpadding="6" cellspacing="0"><tr>{headers}</tr>{rows}</table></div>
     </div>
     """
+
+
+def _step24v_trade_gap_stats(bt, split_count=40):
+    """후보 평가용 보조지표: 장기 무체결 공백 최대값만 계산한다. 매매 공식에는 관여하지 않는다."""
+    if bt is None or bt.empty or "Date" not in bt.columns:
+        return {"max_gap_trading_days": 0, "max_gap_calendar_days": 0, "gap_count_60d": 0}
+    df = bt.copy().sort_values("Date").reset_index(drop=True)
+    df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
+    df = df.dropna(subset=["Date"])
+    if df.empty:
+        return {"max_gap_trading_days": 0, "max_gap_calendar_days": 0, "gap_count_60d": 0}
+    def _bool_col(name):
+        if name not in df.columns:
+            return pd.Series([False] * len(df), index=df.index)
+        return df[name].fillna(False).astype(bool)
+    action_text = df.get("Action", pd.Series([""] * len(df), index=df.index)).astype(str)
+    fill_mask = (_bool_col("BuyLOCExecuted") | _bool_col("SellLOCExecuted") | _bool_col("DesignatedSellExecuted") | action_text.str.contains("매수|매도", regex=True, na=False))
+    max_td = 0
+    max_cd = 0
+    gap_count_60d = 0
+    start_i = None
+    for i, filled in enumerate(fill_mask.tolist()):
+        if filled:
+            if start_i is not None:
+                end_i = i - 1
+                td = end_i - start_i + 1
+                cd = int((df.loc[end_i, "Date"] - df.loc[start_i, "Date"]).days)
+                max_td = max(max_td, td)
+                max_cd = max(max_cd, cd)
+                if td >= 60 or cd >= 90:
+                    gap_count_60d += 1
+                start_i = None
+        else:
+            if start_i is None:
+                start_i = i
+    if start_i is not None:
+        end_i = len(df) - 1
+        td = end_i - start_i + 1
+        cd = int((df.loc[end_i, "Date"] - df.loc[start_i, "Date"]).days)
+        max_td = max(max_td, td)
+        max_cd = max(max_cd, cd)
+        if td >= 60 or cd >= 90:
+            gap_count_60d += 1
+    return {"max_gap_trading_days": int(max_td), "max_gap_calendar_days": int(max_cd), "gap_count_60d": int(gap_count_60d)}
+
+
+def _step24v_pick_candidate_rows(df):
+    """Optimizer 결과에서 실전 비교용 대표 후보를 뽑는다. 후보 평가는 원문 매매공식이 아닌 보조 지표다."""
+    if df is None or df.empty:
+        return []
+    work = df.copy()
+    for col in ["Score", "CAGR", "MDD", "CompletedCycles", "AvgHoldDays"]:
+        if col in work.columns:
+            work[col] = pd.to_numeric(work[col], errors="coerce")
+    picks = []
+    def add(kind, idx):
+        if idx is None or pd.isna(idx):
+            return
+        row = work.loc[idx].copy()
+        key = (int(row.get("분할수", 0) or 0), float(row.get("첫매수LOC여유율", 0) or 0), float(row.get("지정가매도%", 0) or 0))
+        if any(p["key"] == key for p in picks):
+            return
+        picks.append({"kind": kind, "key": key, "row": row})
+    if "Score" in work.columns and work["Score"].notna().any():
+        add("균형형 Score 1위", work["Score"].idxmax())
+    if "CAGR" in work.columns and work["CAGR"].notna().any():
+        add("수익률형 CAGR 1위", work["CAGR"].idxmax())
+    if "MDD" in work.columns and work["MDD"].notna().any():
+        add("방어형 MDD 1위", work["MDD"].idxmax())
+    if "CompletedCycles" in work.columns and len(picks) < 3 and work["CompletedCycles"].notna().any():
+        add("회전형 완료주기 1위", work["CompletedCycles"].idxmax())
+    return picks[:3]
+
+
+def build_step24v_candidate_compare_html(df, ticker, fee_percent, mode="optimizer", strategy_key="raor4_step24v"):
+    if strategy_key != "raor4_step24v" or df is None or df.empty:
+        return ""
+    picks = _step24v_pick_candidate_rows(df)
+    if not picks:
+        return ""
+    cards = ""
+    rows = ""
+    for rank, item in enumerate(picks, 1):
+        row = item["row"]
+        split_v = int(row.get("분할수", 40) or 40)
+        first_v = float(row.get("첫매수LOC여유율", 12) or 12)
+        sell_v = float(row.get("지정가매도%", 15) or 15)
+        params = {"infinite_split_count": split_v, "first_loc_buffer_pct": first_v, "designated_sell_pct": sell_v}
+        gap = {"max_gap_trading_days": "-", "max_gap_calendar_days": "-", "gap_count_60d": "-"}
+        y2022 = "-"
+        practical_score = to_number_safe(row.get("Score"))
+        try:
+            bt2, trade2 = _step24p_run_params(ticker, params, fee_percent)
+            gap = _step24v_trade_gap_stats(bt2, split_v)
+            ydf = calc_yearly_stats(bt2)
+            if not ydf.empty and 2022 in set(ydf["Year"].astype(int)):
+                y2022 = f"{float(ydf.loc[ydf['Year'].astype(int)==2022, 'StrategyReturn'].iloc[0]):.2f}%"
+            practical_score = practical_score - min(float(gap.get("max_gap_trading_days", 0) or 0), 120) * 0.10 - float(gap.get("gap_count_60d", 0) or 0) * 2.5
+        except Exception:
+            pass
+        if practical_score >= 90:
+            verdict = "실전 1군 후보"
+            cls = "positive"
+        elif practical_score >= 60:
+            verdict = "실전 검토 후보"
+            cls = "warning"
+        else:
+            verdict = "관찰/보류"
+            cls = "danger"
+        apply_link = (f'/?ticker={ticker}&strategy={strategy_key}&infinite_split_count={split_v}'
+                      f'&first_loc_buffer_pct={first_v}&designated_sell_pct={sell_v}'
+                      f'&fee_percent={fee_percent}&action_mode=backtest&applied_from={mode}'
+                      f'&applied_rank={rank}&applied_score={row.get("Score", "")}')
+        cards += f'<div class="metric {cls}"><h3>{item["kind"]}</h3><p>{verdict}</p><small>{split_v}분할 · LOC {first_v}% · 지정가 {sell_v}%</small></div>'
+        rows += f'''
+        <tr>
+            <td>{item["kind"]}</td><td>{split_v}</td><td>{first_v}</td><td>{sell_v}</td>
+            <td>{row.get("CAGR", "-")}%</td><td>{row.get("MDD", "-")}%</td><td>{row.get("CompletedCycles", "-")}회</td>
+            <td>{gap.get("max_gap_trading_days", "-")}거래일 / {gap.get("max_gap_calendar_days", "-")}일</td>
+            <td>{gap.get("gap_count_60d", "-")}회</td><td>{y2022}</td><td>{practical_score:.2f}</td><td>{verdict}</td>
+            <td><a class="apply-link" href="{apply_link}">적용</a></td>
+        </tr>
+        '''
+    return f'''
+    <div class="card step24v-compare-card">
+        <h2>Step24V 후보 비교 / 실전선정</h2>
+        <p class="small-note">Optimizer 결과에서 균형형·수익률형·방어형 대표 후보를 자동 추려 비교합니다. 이 표의 실전점수와 공백 페널티는 원문 매매공식이 아니라 후보 선택용 보조지표입니다.</p>
+        <div class="grid">{cards}</div>
+        <div class="table-wrap"><table class="step24q-table" border="1" cellpadding="6" cellspacing="0">
+            <tr><th>후보유형</th><th>분할</th><th>첫매수 LOC</th><th>지정가%</th><th>CAGR</th><th>MDD</th><th>완료주기</th><th>최대 무체결 공백</th><th>장기공백</th><th>2022 수익률</th><th>실전점수</th><th>판정</th><th>설정</th></tr>
+            {rows}
+        </table></div>
+    </div>
+    '''
+
+
+
+def _step24w_period_metric(bt, start=None, end=None):
+    try:
+        sub = bt.copy()
+        sub["Date"] = pd.to_datetime(sub["Date"], errors="coerce")
+        if start:
+            sub = sub[sub["Date"] >= pd.to_datetime(start)]
+        if end:
+            sub = sub[sub["Date"] <= pd.to_datetime(end)]
+        sub = sub.dropna(subset=["Date"]).sort_values("Date")
+        if len(sub) < 2:
+            return {"cagr": 0.0, "mdd": 0.0}
+        return {"cagr": float(calc_cagr(sub)), "mdd": float(sub["Drawdown"].min() * 100) if "Drawdown" in sub.columns else 0.0}
+    except Exception:
+        return {"cagr": 0.0, "mdd": 0.0}
+
+
+def _step24w_neighbor_stability(df, row):
+    try:
+        work = df.copy()
+        for col in ["분할수", "첫매수LOC여유율", "지정가매도%", "CAGR", "MDD"]:
+            work[col] = pd.to_numeric(work[col], errors="coerce")
+        split_v = int(row.get("분할수")); loc_v = float(row.get("첫매수LOC여유율")); sell_v = float(row.get("지정가매도%"))
+        base_cagr = float(row.get("CAGR", 0) or 0); base_mdd = abs(float(row.get("MDD", 0) or 0))
+        near = work[(work["분할수"] == split_v) & (abs(work["첫매수LOC여유율"] - loc_v) <= 0.51) & (abs(work["지정가매도%"] - sell_v) <= 2.51)]
+        if len(near) <= 1:
+            return 45.0
+        score = 100 - max(base_cagr - float(near["CAGR"].median()), 0) * 1.6 - max(abs(float(near["MDD"].median())) - base_mdd, 0) * 1.4
+        return max(0.0, min(100.0, float(score)))
+    except Exception:
+        return 40.0
+
+
+
+def _step24x_eval_param(ticker, fee_percent, params):
+    """Step24X polling용 단일 후보 평가. 매매 공식에는 관여하지 않는 보조 평가 함수."""
+    split_v = int(params.get("infinite_split_count", 40) or 40)
+    first_v = float(params.get("first_loc_buffer_pct", 12) or 12)
+    sell_v = float(params.get("designated_sell_pct", 15) or 15)
+    bt2, trade2 = _step24p_run_params(ticker, params, fee_percent)
+    whole = _step24w_period_metric(bt2)
+    recent3 = _step24w_period_metric(bt2, start=pd.to_datetime(bt2["Date"].max()) - pd.DateOffset(years=3))
+    y2022 = _step24w_period_metric(bt2, start="2022-01-01", end="2022-12-31")
+    gap = _step24v_trade_gap_stats(bt2, split_v)
+    cycle = make_cycle_status(trade2, bt2, split_v)
+    pf = _safe_profit_factor(trade2)
+    cagr = float(whole.get("cagr", 0) or 0)
+    mdd = float(whole.get("mdd", 0) or 0)
+    recent3_cagr = float(recent3.get("cagr", 0) or 0)
+    y2022_mdd = float(y2022.get("mdd", 0) or 0)
+    gap_days = int(gap.get("max_gap_trading_days", 0) or 0)
+    completed = int(cycle.get("completed_cycles", 0) or 0)
+    neighbor = 70.0
+    robust = min(max(cagr,0),60)*1.15 - min(abs(mdd),90)*0.55 + min(max(recent3_cagr,0),60)*0.35 + max(y2022_mdd,-100)*0.18 - min(gap_days,260)*0.07 - float(gap.get("gap_count_60d",0) or 0)*2.5 + min(completed,120)*0.12 + min(pf,8)*2.0 + neighbor*0.35
+    risk = "낮음" if robust >= 80 and neighbor >= 70 and gap_days <= 120 and y2022_mdd >= -50 else ("보통" if robust >= 60 and neighbor >= 50 else "높음")
+    verdict = "실전 후보" if risk == "낮음" else ("유효 후보" if risk == "보통" else "관찰")
+    return {"판정": verdict, "과최적화위험": risk, "RobustScore": round(float(robust),2), "분할수": split_v, "첫매수LOC": first_v, "지정가%": sell_v, "CAGR": round(cagr,2), "MDD": round(mdd,2), "최근3년CAGR": round(recent3_cagr,2), "2022_MDD": round(y2022_mdd,2), "최대공백": gap_days, "장기공백": int(gap.get("gap_count_60d",0) or 0), "완료주기": completed, "PF": round(float(pf or 0),2), "주변안정성": round(neighbor,1)}
+
+
+def _step24x_recalc_neighbor_scores(results):
+    """계산 완료 후 주변 파라미터 안정성을 전체 결과 기준으로 보정한다."""
+    if not results:
+        return results
+    try:
+        df = pd.DataFrame(results).copy()
+        work = df.rename(columns={"첫매수LOC": "첫매수LOC여유율", "지정가%": "지정가매도%"})
+        fixed = []
+        for _, row in work.iterrows():
+            neighbor = _step24w_neighbor_stability(work, row)
+            r = row.to_dict()
+            r["첫매수LOC"] = r.pop("첫매수LOC여유율")
+            r["지정가%"] = r.pop("지정가매도%")
+            cagr = float(r.get("CAGR", 0) or 0); mdd = float(r.get("MDD", 0) or 0); recent3 = float(r.get("최근3년CAGR", 0) or 0); y2022 = float(r.get("2022_MDD", 0) or 0)
+            gap_days = int(r.get("최대공백", 0) or 0); long_gap = int(r.get("장기공백", 0) or 0); completed = int(r.get("완료주기", 0) or 0); pf = float(r.get("PF", 0) or 0)
+            robust = min(max(cagr,0),60)*1.15 - min(abs(mdd),90)*0.55 + min(max(recent3,0),60)*0.35 + max(y2022,-100)*0.18 - min(gap_days,260)*0.07 - long_gap*2.5 + min(completed,120)*0.12 + min(pf,8)*2.0 + float(neighbor)*0.35
+            risk = "낮음" if robust >= 80 and neighbor >= 70 and gap_days <= 120 and y2022 >= -50 else ("보통" if robust >= 60 and neighbor >= 50 else "높음")
+            verdict = "실전 후보" if risk == "낮음" else ("유효 후보" if risk == "보통" else "관찰")
+            r.update({"RobustScore": round(float(robust),2), "주변안정성": round(float(neighbor),1), "과최적화위험": risk, "판정": verdict})
+            fixed.append(r)
+        return sorted(fixed, key=lambda x: (float(x.get("RobustScore",0)), float(x.get("주변안정성",0)), float(x.get("최근3년CAGR",0))), reverse=True)
+    except Exception:
+        return sorted(results, key=lambda x: float(x.get("RobustScore",0)), reverse=True)
+
+
+def _step24x_job_worker(job_id):
+    with STEP24X_JOBS_LOCK:
+        job = STEP24X_JOBS.get(job_id)
+    if not job:
+        return
+    params = job.get("params", {})
+    ticker = str(params.get("ticker", "TQQQ")).upper()
+    fee_percent = float(params.get("fee_percent", 0.1) or 0.1)
+    grid = list(_step24p_param_grid(
+        mode="deepmine",
+        split_values_text=params.get("split_values_text", "20,40"),
+        first_loc_min=float(params.get("first_loc_min", 10.0) or 10.0),
+        first_loc_max=float(params.get("first_loc_max", 15.0) or 15.0),
+        first_loc_step=float(params.get("first_loc_step", 0.5) or 0.5),
+        designated_min=float(params.get("designated_min", 10.0) or 10.0),
+        designated_max=float(params.get("designated_max", 25.0) or 25.0),
+        designated_step=float(params.get("designated_step", 2.5) or 2.5),
+    ))
+    total = len(grid)
+    with STEP24X_JOBS_LOCK:
+        job.update({"status": "running", "total": total, "done": 0, "progress": 0.0, "message": "후보 계산 시작", "log": [f"총 {total}개 조합 계산 시작"], "results": []})
+    results = []
+    for idx, param in enumerate(grid, start=1):
+        with STEP24X_JOBS_LOCK:
+            job = STEP24X_JOBS.get(job_id)
+            if not job:
+                return
+            if job.get("cancel_requested"):
+                job.update({"status": "cancelled", "message": "사용자 취소", "results": sorted(results, key=lambda x: float(x.get("RobustScore",0)), reverse=True)})
+                return
+            job["message"] = f'{idx}/{total} · {param["infinite_split_count"]}분할 / LOC {param["first_loc_buffer_pct"]} / 지정가 {param["designated_sell_pct"]} 계산 중'
+        try:
+            row = _step24x_eval_param(ticker, fee_percent, param)
+            results.append(row)
+            results = sorted(results, key=lambda x: float(x.get("RobustScore",0)), reverse=True)
+            top = results[0]
+            log_line = f'[{idx}/{total}] {param["infinite_split_count"]}분할 LOC {param["first_loc_buffer_pct"]} 지정가 {param["designated_sell_pct"]} → Robust {row["RobustScore"]}, CAGR {row["CAGR"]}%, MDD {row["MDD"]}% / 현재 TOP1 {top["분할수"]}분할 LOC {top["첫매수LOC"]} 지정가 {top["지정가%"]}'
+        except Exception as e:
+            log_line = f"[{idx}/{total}] 계산 실패: {e}"
+        with STEP24X_JOBS_LOCK:
+            job = STEP24X_JOBS.get(job_id)
+            if not job:
+                return
+            job.update({"done": idx, "progress": round((idx / max(total,1))*100, 1), "results": results[:80], "log": (job.get("log", []) + [log_line])[-120:]})
+    final_results = _step24x_recalc_neighbor_scores(results)
+    csv_text = ""
+    try:
+        cache_dir = Path("step24_cache") / "step24x"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        cache_key = hashlib.md5(json.dumps(params, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()[:12]
+        csv_path = cache_dir / f"{ticker}_raor4_step24x_live_{cache_key}.csv"
+        pd.DataFrame(final_results).to_csv(csv_path, index=False, encoding="utf-8-sig")
+        csv_text = str(csv_path)
+    except Exception:
+        pass
+    with STEP24X_JOBS_LOCK:
+        job = STEP24X_JOBS.get(job_id)
+        if job:
+            job.update({"status": "done", "done": total, "progress": 100.0, "message": "계산 완료", "results": final_results[:120], "csv": csv_text, "log": (job.get("log", []) + ["계산 완료 · 주변 안정성 보정 및 CSV 저장"])[-120:]})
+
+
+def build_step24x_live_panel_html(ticker, fee_percent, split_values_text, first_loc_min, first_loc_max, first_loc_step, designated_min, designated_max, designated_step, display_limit, score_mode):
+    payload = {"ticker": ticker, "fee_percent": fee_percent, "split_values_text": split_values_text, "first_loc_min": first_loc_min, "first_loc_max": first_loc_max, "first_loc_step": first_loc_step, "designated_min": designated_min, "designated_max": designated_max, "designated_step": designated_step, "display_limit": display_limit, "score_mode": score_mode}
+    return f"""
+    <div id="step24x-live-root" class="card hero step24x-live-card" data-payload='{json.dumps(payload, ensure_ascii=False)}'>
+        <h2>Step24X 실시간 Robust Mining</h2>
+        <p class="small-note">job_id + polling 방식으로 후보를 계산하며, 완료 전에도 후보표와 진행 로그가 한 줄씩 누적됩니다. 매매 엔진 공식은 Step24W와 동일합니다.</p>
+        <div class="grid">
+            <div class="metric positive"><h3>진행률</h3><p id="step24x-progress-text">대기</p></div>
+            <div class="metric"><h3>진행 조합</h3><p id="step24x-count-text">0 / 0</p></div>
+            <div class="metric positive"><h3>현재 TOP1</h3><p id="step24x-top-text">-</p></div>
+            <div class="metric warning"><h3>상태</h3><p id="step24x-status-text">준비</p></div>
+        </div>
+        <div class="progress-shell"><div id="step24x-progress-bar" class="progress-bar" style="width:0%;"></div></div>
+        <div class="quick-apply-row"><button type="button" id="step24x-cancel-btn" class="quick-apply-btn" style="border:0;cursor:pointer;">계산 취소</button></div>
+    </div>
+    <div class="card step24x-live-table-card">
+        <h2>실시간 후보표</h2>
+        <div class="table-wrap"><table class="step24q-table" border="1" cellpadding="6" cellspacing="0"><thead><tr><th>순위</th><th>판정</th><th>과최적화위험</th><th>RobustScore</th><th>분할</th><th>LOC</th><th>지정가</th><th>CAGR</th><th>MDD</th><th>최근3년</th><th>2022 MDD</th><th>최대공백</th><th>장기공백</th><th>완료주기</th><th>PF</th><th>주변안정성</th><th>설정</th></tr></thead><tbody id="step24x-live-tbody"><tr><td colspan="17">계산 시작 대기 중...</td></tr></tbody></table></div>
+    </div>
+    <div class="card step24x-log-card"><h2>실시간 로그</h2><pre id="step24x-log" class="step24x-log">대기 중...</pre></div>
+    """
+
+def build_step24w_robust_mining_html(ticker, fee_percent, split_values_text="20,40", first_loc_min=10.0, first_loc_max=15.0, first_loc_step=0.5, designated_min=10.0, designated_max=25.0, designated_step=2.5, display_limit=30, score_mode="balanced"):
+    base_df, errors, cache_file, from_cache, total_count = run_step24p_screen_optimizer(ticker=ticker, fee_percent=fee_percent, mode="deepmine", split_values_text=split_values_text, first_loc_min=first_loc_min, first_loc_max=first_loc_max, first_loc_step=first_loc_step, designated_min=designated_min, designated_max=designated_max, designated_step=designated_step, score_mode=score_mode, use_cache=True, strategy_key="raor4_step24w")
+    if base_df is None or base_df.empty:
+        return '<div class="card"><h2>Step24W Robust Mining</h2><p>후보 계산 결과가 없습니다.</p></div>'
+    rows = []
+    for _, row in base_df.head(min(80, len(base_df))).iterrows():
+        split_v = int(row.get("분할수", 40) or 40); first_v = float(row.get("첫매수LOC여유율", 12) or 12); sell_v = float(row.get("지정가매도%", 15) or 15)
+        params = {"infinite_split_count": split_v, "first_loc_buffer_pct": first_v, "designated_sell_pct": sell_v}
+        try:
+            bt2, trade2 = _step24p_run_params(ticker, params, fee_percent)
+            whole = _step24w_period_metric(bt2)
+            recent3 = _step24w_period_metric(bt2, start=pd.to_datetime(bt2["Date"].max()) - pd.DateOffset(years=3))
+            y2022 = _step24w_period_metric(bt2, start="2022-01-01", end="2022-12-31")
+            gap = _step24v_trade_gap_stats(bt2, split_v)
+        except Exception:
+            whole = {"cagr": to_number_safe(row.get("CAGR")), "mdd": to_number_safe(row.get("MDD"))}; recent3={"cagr":0.0}; y2022={"mdd":0.0}; gap={"max_gap_trading_days":999,"gap_count_60d":99}
+        neighbor = _step24w_neighbor_stability(base_df, row)
+        cagr = float(whole.get("cagr", 0)); mdd = float(whole.get("mdd", 0)); recent3_cagr = float(recent3.get("cagr", 0)); y2022_mdd = float(y2022.get("mdd", 0)); gap_days = int(gap.get("max_gap_trading_days", 0) or 0)
+        completed = float(row.get("CompletedCycles", 0) or 0); pf = float(row.get("ProfitFactor", 0) or 0)
+        robust = min(max(cagr,0),60)*1.15 - min(abs(mdd),90)*0.55 + min(max(recent3_cagr,0),60)*0.35 + max(y2022_mdd,-100)*0.18 - min(gap_days,260)*0.07 - float(gap.get("gap_count_60d",0) or 0)*2.5 + min(completed,120)*0.12 + min(pf,8)*2.0 + neighbor*0.35
+        risk = "낮음" if robust >= 80 and neighbor >= 70 and gap_days <= 120 and y2022_mdd >= -50 else ("보통" if robust >= 60 and neighbor >= 50 else "높음")
+        verdict = "실전 후보" if risk == "낮음" else ("유효 후보" if risk == "보통" else "관찰")
+        rows.append({"판정": verdict, "과최적화위험": risk, "RobustScore": round(robust,2), "분할수": split_v, "첫매수LOC": first_v, "지정가%": sell_v, "CAGR": round(cagr,2), "MDD": round(mdd,2), "최근3년CAGR": round(recent3_cagr,2), "2022_MDD": round(y2022_mdd,2), "최대공백": gap_days, "장기공백": int(gap.get("gap_count_60d",0) or 0), "완료주기": int(completed), "PF": round(pf,2), "주변안정성": round(neighbor,1)})
+    rdf = pd.DataFrame(rows).sort_values(["RobustScore", "주변안정성", "최근3년CAGR"], ascending=False).reset_index(drop=True)
+    top = rdf.head(max(1, int(display_limit or 30)))
+    best = top.iloc[0]
+    quick = ""; trs = ""
+    for i, r in top.iterrows():
+        rank = i + 1
+        apply_link = f'/?ticker={ticker}&strategy=raor4_step24w&infinite_split_count={int(r["분할수"])}&first_loc_buffer_pct={float(r["첫매수LOC"])}&designated_sell_pct={float(r["지정가%"])}&fee_percent={fee_percent}&action_mode=backtest&applied_from=robust&applied_rank={rank}&applied_score={r["RobustScore"]}'
+        if rank <= 3:
+            quick += f'<a class="quick-apply-btn" href="{apply_link}">{rank}위 적용 · {int(r["분할수"])}분할 · LOC {r["첫매수LOC"]}% · 지정가 {r["지정가%"]}%</a>'
+        trs += f'<tr><td>{rank}</td><td>{r["판정"]}</td><td>{r["과최적화위험"]}</td><td>{r["RobustScore"]}</td><td>{r["분할수"]}</td><td>{r["첫매수LOC"]}</td><td>{r["지정가%"]}</td><td>{r["CAGR"]}%</td><td>{r["MDD"]}%</td><td>{r["최근3년CAGR"]}%</td><td>{r["2022_MDD"]}%</td><td>{r["최대공백"]}거래일</td><td>{r["장기공백"]}회</td><td>{r["완료주기"]}회</td><td>{r["PF"]}</td><td>{r["주변안정성"]}</td><td><a class="apply-link" href="{apply_link}">적용</a></td></tr>'
+    return (f'<div id="step24-results" class="card hero step24w-robust-card"><h2>Step24W 과최적화 방어 딥마이닝</h2><p class="small-note">CAGR 1위가 아니라 전체성과, 최근 3년, 2022년 방어, 최대 무체결 공백, 완료주기, Profit Factor, 주변 파라미터 안정성을 함께 평가합니다. 매매 공식은 변경하지 않습니다.</p><div class="grid"><div class="metric positive"><h3>Robust Score</h3><p>{best["RobustScore"]}</p></div><div class="metric positive"><h3>판정</h3><p>{best["판정"]}</p></div><div class="metric warning"><h3>과최적화 위험</h3><p>{best["과최적화위험"]}</p></div><div class="metric positive"><h3>CAGR</h3><p>{best["CAGR"]}%</p></div><div class="metric warning"><h3>MDD</h3><p>{best["MDD"]}%</p></div><div class="metric positive"><h3>주변 안정성</h3><p>{best["주변안정성"]}</p></div></div><div class="quick-apply-row">{quick}</div></div>'
+            f'<div class="card step24w-robust-table-card"><h2>Robust Mining 후보표</h2><div class="table-wrap"><table class="step24q-table" border="1" cellpadding="6" cellspacing="0"><tr><th>순위</th><th>판정</th><th>과최적화위험</th><th>RobustScore</th><th>분할</th><th>LOC</th><th>지정가</th><th>CAGR</th><th>MDD</th><th>최근3년</th><th>2022 MDD</th><th>최대공백</th><th>장기공백</th><th>완료주기</th><th>PF</th><th>주변안정성</th><th>설정</th></tr>{trs}</table></div></div>')
+
+def build_step24v_cleanup_html(strategy=""):
+    if strategy != "raor4_step24v":
+        return ""
+    return '''
+    <div class="card step24v-cleanup-card">
+        <h2>Step24V 웹화면 정리 후보 체크</h2>
+        <p class="small-note">실제 파일 삭제가 아니라 화면/드롭다운에서 숨기거나 아카이브로 이동해도 될 후보입니다. Step24N~V 기준판과 데이터 파일은 보존합니다.</p>
+        <div class="table-wrap"><table border="1" cellpadding="6" cellspacing="0">
+            <tr><th>구분</th><th>정리 후보</th><th>판단</th><th>권장 처리</th></tr>
+            <tr><td>드롭다운</td><td>V1~V5 / Step23 계열</td><td>현재 Infinite Lab 원문엔진 검증과 직접 관련 낮음</td><td>삭제보다 ‘이전 연구용’ 접기/숨김</td></tr>
+            <tr><td>드롭다운</td><td>Step24E~H</td><td>기능 검증의 역사 버전. 현재 실사용은 N 이후가 기준</td><td>화면 기본 목록에서는 숨기고 README/백업으로 보존</td></tr>
+            <tr><td>카드</td><td>Step20 추천 프리셋</td><td>RSI 프리셋 기반 문구라 Step24 원문엔진 화면에서는 혼동 가능</td><td>Step24V에서는 ‘아카이브/보조’로 축소 표시 권장</td></tr>
+            <tr><td>Optimizer 섹션</td><td>Step18/19/20/21 연구 설명 카드</td><td>정보량은 좋지만 실전 후보 선택 화면을 길게 만듦</td><td>접이식 아카이브 또는 별도 연구 탭으로 이동</td></tr>
+            <tr><td>검증/로그</td><td>긴 매매로그 전체표</td><td>필요하지만 화면을 매우 길게 만듦</td><td>최근 50개 기본 표시 + CSV/전체보기 버튼 추천</td></tr>
+            <tr><td>삭제 금지</td><td>app.py, ticker_config.py, optimizer_lab.py, 최신 Step24 엔진, CSV 원본</td><td>실행/재현성에 필요</td><td>삭제 금지</td></tr>
+        </table></div>
+    </div>
+    '''
 
 def build_step24o_optimizer_html(*args, **kwargs):
     return build_step24p_optimizer_html(*args, **kwargs)
@@ -2575,8 +3292,8 @@ def load_optimizer_result(ticker, strategy):
 
 
 def build_optimizer_result_html(ticker, strategy):
-    if strategy in ["raor4_step24r", "raor4_step24q", "raor4_step24p", "raor4_step24o"]:
-        strategy_key = strategy if strategy in ["raor4_step24r", "raor4_step24q"] else "raor4_step24p"
+    if strategy in ["raor4_step25c", "raor4_step25b", "raor4_step25a", "raor4_step24z", "raor4_step24y", "raor4_step24x", "raor4_step24w", "raor4_step24v", "raor4_step24u", "raor4_step24t", "raor4_step24s", "raor4_step24r", "raor4_step24q", "raor4_step24p", "raor4_step24o"]:
+        strategy_key = strategy if strategy in ["raor4_step25c", "raor4_step25b", "raor4_step25a", "raor4_step24z", "raor4_step24y", "raor4_step24x", "raor4_step24w", "raor4_step24v", "raor4_step24u", "raor4_step24t", "raor4_step24s", "raor4_step24r", "raor4_step24q"] else "raor4_step24p"
         return build_step24p_optimizer_html(ticker, fee_percent=0.25, mode="optimizer", strategy_key=strategy_key)
     df, file_used = load_optimizer_result(ticker, strategy)
     if df.empty:
@@ -2644,17 +3361,124 @@ def download_step24_cache():
 
 # Flask 메인 라우트
 
+# Step24U polling 준비 API: 24U에서 실제 background job으로 연결 예정
+STEP24T_PROGRESS_STATE = {"status": "idle", "percent": 0, "message": "대기 중", "current": 0, "total": 0}
+
+
+@app.route("/api/step24x/start", methods=["POST"])
+def api_step24x_start():
+    payload = request.get_json(silent=True) or {}
+    ticker = str(payload.get("ticker", "TQQQ")).upper()
+    if ticker not in ["TQQQ", "SOXL"]:
+        ticker = "TQQQ"
+    payload["ticker"] = ticker
+    job_id = uuid.uuid4().hex[:12]
+    with STEP24X_JOBS_LOCK:
+        STEP24X_JOBS[job_id] = {"job_id": job_id, "status": "queued", "progress": 0.0, "done": 0, "total": 0, "results": [], "log": [], "message": "대기 중", "cancel_requested": False, "params": payload, "created_at": time.time()}
+    t = threading.Thread(target=_step24x_job_worker, args=(job_id,), daemon=True)
+    t.start()
+    return jsonify({"ok": True, "job_id": job_id})
+
+
+@app.route("/api/step24x/progress/<job_id>")
+def api_step24x_progress(job_id):
+    with STEP24X_JOBS_LOCK:
+        job = STEP24X_JOBS.get(job_id)
+        if not job:
+            return jsonify({"ok": False, "error": "job not found"}), 404
+        safe = {k: v for k, v in job.items() if k not in ["cancel_requested"]}
+    return jsonify({"ok": True, "job": safe})
+
+
+@app.route("/api/step24x/cancel/<job_id>", methods=["POST"])
+def api_step24x_cancel(job_id):
+    with STEP24X_JOBS_LOCK:
+        job = STEP24X_JOBS.get(job_id)
+        if not job:
+            return jsonify({"ok": False, "error": "job not found"}), 404
+        job["cancel_requested"] = True
+        job["message"] = "취소 요청됨"
+    return jsonify({"ok": True})
+
+
+@app.route("/step24x.js")
+def step24x_js():
+    return Response(r"""
+(function(){
+    const root = document.getElementById("step24x-live-root");
+    if (!root) return;
+    let jobId = null;
+    let timer = null;
+    const payload = JSON.parse(root.getAttribute("data-payload") || "{}");
+    const tbody = document.getElementById("step24x-live-tbody");
+    const logBox = document.getElementById("step24x-log");
+    const bar = document.getElementById("step24x-progress-bar");
+    const prog = document.getElementById("step24x-progress-text");
+    const cnt = document.getElementById("step24x-count-text");
+    const topText = document.getElementById("step24x-top-text");
+    const statusText = document.getElementById("step24x-status-text");
+    function esc(v){ return String(v ?? "").replace(/[&<>"']/g, function(s){ return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[s]; }); }
+    function renderRows(results){
+        if (!results || !results.length){ tbody.innerHTML = '<tr><td colspan="17">계산 중입니다...</td></tr>'; return; }
+        tbody.innerHTML = results.slice(0, 50).map(function(r, i){
+            const href = "/?ticker=" + encodeURIComponent(payload.ticker) + "&strategy=raor4_step24x&infinite_split_count=" + r["분할수"] + "&first_loc_buffer_pct=" + r["첫매수LOC"] + "&designated_sell_pct=" + r["지정가%"] + "&fee_percent=" + payload.fee_percent + "&action_mode=backtest&applied_from=robust_live&applied_rank=" + (i+1) + "&applied_score=" + r.RobustScore;
+            return '<tr><td>'+(i+1)+'</td><td>'+esc(r["판정"])+'</td><td>'+esc(r["과최적화위험"])+'</td><td>'+esc(r.RobustScore)+'</td><td>'+esc(r["분할수"])+'</td><td>'+esc(r["첫매수LOC"])+'</td><td>'+esc(r["지정가%"])+'</td><td>'+esc(r.CAGR)+'%</td><td>'+esc(r.MDD)+'%</td><td>'+esc(r["최근3년CAGR"])+'%</td><td>'+esc(r["2022_MDD"])+'%</td><td>'+esc(r["최대공백"])+'거래일</td><td>'+esc(r["장기공백"])+'회</td><td>'+esc(r["완료주기"])+'회</td><td>'+esc(r.PF)+'</td><td>'+esc(r["주변안정성"])+'</td><td><a class="apply-link" href="'+href+'">적용</a></td></tr>';
+        }).join("");
+        const top = results[0];
+        topText.textContent = top["분할수"]+"분할 · LOC "+top["첫매수LOC"]+" · 지정가 "+top["지정가%"]+" · Robust "+top.RobustScore;
+    }
+    function poll(){
+        fetch("/api/step24x/progress/" + jobId).then(r => r.json()).then(data => {
+            if (!data.ok) throw new Error(data.error || "progress error");
+            const job = data.job;
+            const pct = job.progress || 0;
+            bar.style.width = pct + "%";
+            prog.textContent = pct + "%";
+            cnt.textContent = (job.done || 0) + " / " + (job.total || 0);
+            statusText.textContent = job.status || "-";
+            renderRows(job.results || []);
+            logBox.textContent = (job.log || []).join("\n");
+            if (job.status === "done" || job.status === "cancelled"){
+                clearInterval(timer);
+                if (job.csv) logBox.textContent += "\nCSV: " + job.csv;
+            }
+        }).catch(err => {
+            statusText.textContent = "오류";
+            logBox.textContent += "\n" + err.message;
+            clearInterval(timer);
+        });
+    }
+    fetch("/api/step24x/start", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(payload)})
+        .then(r => r.json()).then(data => {
+            if (!data.ok) throw new Error(data.error || "start error");
+            jobId = data.job_id;
+            statusText.textContent = "running";
+            timer = setInterval(poll, 1000);
+            poll();
+        }).catch(err => { statusText.textContent="오류"; logBox.textContent = err.message; });
+    const cancelBtn = document.getElementById("step24x-cancel-btn");
+    if (cancelBtn){ cancelBtn.addEventListener("click", function(){ if(jobId){ fetch("/api/step24x/cancel/" + jobId, {method:"POST"}); } }); }
+})();
+""", mimetype="application/javascript")
+
+
+@app.route("/api/step24u/progress")
+def api_step24u_progress():
+    return STEP24T_PROGRESS_STATE
+
 # =========================
 @app.route("/")
 def home():
     global daily, weekly
 
-    ticker = request.args.get("ticker", default="TQQQ").upper()
+    ticker = request.args.get("ticker", default="SOXL").upper()
 
-    if ticker not in TICKER_LIST:
-        ticker = "TQQQ"
+    if ticker not in ["SOXL", "TQQQ"]:
+        ticker = "SOXL"
 
-    strategy = request.args.get("strategy", default="raor4_step24r")
+    strategy = request.args.get("strategy", default="raor_v22")
+    if strategy not in ["raor_v22", "raor4_step25d"]:
+        strategy = "raor_v22"
     action_mode = request.args.get("action_mode", default="backtest")
 
     # Step24 원문엔진은 TQQQ/SOXL만 지원한다. QQQ로 들어오면 500 오류 대신 TQQQ로 보정한다.
@@ -2695,7 +3519,7 @@ def home():
     ma20_factor = request.args.get("ma20_factor", default=5, type=int)
 
     # Step22B 무한매수 4.0 V1 입력값
-    infinite_split_count = request.args.get("infinite_split_count", default=20, type=int)
+    infinite_split_count = request.args.get("infinite_split_count", default=40, type=int)
     infinite_target_profit = request.args.get("infinite_target_profit", default=7.0, type=float)
     quarter_sell_ratio = request.args.get("quarter_sell_ratio", default=25.0, type=float)
     star_pct = request.args.get("star_pct", default=7.0, type=float)
@@ -2745,6 +3569,25 @@ def home():
         </div>
         """
 
+
+    # Step24Y~25C 통합 로드맵 안내 패널
+    advanced_stage_html = ""
+    if str(strategy).startswith("raor4_step25") or strategy in ["raor4_step24y", "raor4_step24z", "raor_v22"]:
+        advanced_stage_html = f"""
+        <div class="card hero step25-roadmap-card">
+            <h2>Step25D-6 V2.2 로그 보정 진행판</h2>
+            <div class="grid">
+                <div class="metric positive"><h3>24Y 선택도우미</h3><p>후보 해석</p></div>
+                <div class="metric positive"><h3>24Z 프리셋</h3><p>저장 준비</p></div>
+                <div class="metric warning"><h3>25A 동시비교</h3><p>TQQQ/SOXL</p></div>
+                <div class="metric positive"><h3>25B 교차검증</h3><p>원문 체크</p></div>
+                <div class="metric positive"><h3>25C RPA 신호</h3><p>CSV 준비</p></div>
+                <div class="metric warning"><h3>25D 엔진검증</h3><p>V2.2 통합/V4.0 분리</p></div>
+            </div>
+            <p class="small-note">매매 공식은 Step24X 원문엔진 그대로 유지하고, 후보 선정/저장/비교/검증/RPA 출력 화면만 확장합니다.</p>
+        </div>
+        """
+
     # Step24C 보정: 기간설정은 화면 표시만이 아니라 백테스트 실행 데이터에도 적용한다.
     # 기존에는 전체 데이터로 엔진을 먼저 돌린 뒤 결과만 잘라서, 선택기간 이전 포지션이 매매로그에 섞일 수 있었다.
     _daily_full_for_notice = daily.copy()
@@ -2780,7 +3623,15 @@ def home():
         fee_percent=fee_percent,
     )
     strategy_param_map_html = build_strategy_param_map_html()
+    step24v_cleanup_html = build_step24v_cleanup_html(strategy)
     optimizer_compare_html = build_optimizer_compare_html(strategy="rsi")
+
+    # Step25D-6: V2.2 화면에서는 기존 RSI/연구용 보조 카드를 숨긴다.
+    if strategy == "raor_v22":
+        preset_buttons_html = ""
+        strategy_param_map_html = ""
+        step24v_cleanup_html = ""
+        optimizer_compare_html = ""
 
 
     # =========================
@@ -3009,7 +3860,7 @@ def home():
             언이시트 LOC/큰수/매도가 입력값이 있으면 우선 적용하고, 없으면 동적 별점 레이어로 다음 LOC와 큰수 후보를 산출합니다.
         </p>
         """
-    elif strategy in ["raor4_step24r", "raor4_step24q", "raor4_step24p"]:
+    elif strategy in ["raor4_step25d", "raor4_step25c", "raor4_step25b", "raor4_step25a", "raor4_step24z", "raor4_step24y", "raor4_step24x", "raor4_step24w", "raor4_step24v", "raor4_step24u", "raor4_step24t", "raor4_step24s", "raor4_step24r", "raor4_step24q", "raor4_step24p"]:
         # Step24Q/P: Step24O 엔진 기준 + 파라미터 세분화 / 진행형 딥마이닝 UI
         if infinite_split_count not in [20, 40]:
             infinite_split_count = 40
@@ -3017,8 +3868,8 @@ def home():
         if designated_sell_pct <= 0:
             designated_sell_pct = default_designated_sell_pct
 
-        step24_runner = run_raor_infinite4_step24r_backtest if strategy == "raor4_step24r" else (run_raor_infinite4_step24q_backtest if strategy == "raor4_step24q" else run_raor_infinite4_step24p_backtest)
-        step24_label = "Step24R" if strategy == "raor4_step24r" else ("Step24Q" if strategy == "raor4_step24q" else "Step24P")
+        step24_runner = {"raor4_step25d": run_raor_infinite4_step25d_backtest, "raor4_step25c": run_raor_infinite4_step25c_backtest, "raor4_step25b": run_raor_infinite4_step25b_backtest, "raor4_step25a": run_raor_infinite4_step25a_backtest, "raor4_step24z": run_raor_infinite4_step24z_backtest, "raor4_step24y": run_raor_infinite4_step24y_backtest, "raor4_step24x": run_raor_infinite4_step24x_backtest, "raor4_step24w": run_raor_infinite4_step24w_backtest, "raor4_step24v": run_raor_infinite4_step24v_backtest, "raor4_step24u": run_raor_infinite4_step24u_backtest, "raor4_step24t": run_raor_infinite4_step24t_backtest, "raor4_step24s": run_raor_infinite4_step24s_backtest, "raor4_step24r": run_raor_infinite4_step24r_backtest, "raor4_step24q": run_raor_infinite4_step24q_backtest}.get(strategy, run_raor_infinite4_step24p_backtest)
+        step24_label = {"raor4_step25d":"Step25D", "raor4_step25c":"Step25C", "raor4_step25b":"Step25B", "raor4_step25a":"Step25A", "raor4_step24z":"Step24Z", "raor4_step24y":"Step24Y", "raor4_step24x":"Step24X", "raor4_step24w":"Step24W", "raor4_step24v":"Step24V", "raor4_step24u":"Step24U", "raor4_step24t":"Step24T", "raor4_step24s":"Step24S", "raor4_step24r":"Step24R", "raor4_step24q":"Step24Q"}.get(strategy, "Step24P")
         bt, trade_df = step24_runner(
             ticker=ticker,
             split_count=infinite_split_count,
@@ -3064,6 +3915,44 @@ def home():
             </div>
         </div>
         <p class="small-note">{step24_label}: Step24O 엔진 기준으로 파라미터 세분화, 후보별 판정, 검증순서/진행률 표시, CSV 캐시 저장/재사용 구조를 추가한 버전입니다.<br>Step24Q는 TOP 후보 적용, CSV 다운로드, 캐시 재사용 표시, 결과표 가독성 강화가 포함됩니다. Step24R은 여기에 SEED 스타일 대시보드 UI와 실시간 진행률 준비용 오버레이/프론트 구조를 추가합니다. 첫매수 LOC 여유율은 원문 가이드 10~15% 범위 안에서만 탐색합니다. 20/40 외 분할은 원문 공식 미확인으로 제외합니다.</p>
+        """
+
+    elif strategy == "raor_v22":
+        if ticker not in ["TQQQ", "SOXL"]:
+            ticker = "TQQQ"
+        if infinite_split_count not in [20, 30, 40]:
+            infinite_split_count = 40
+        split_count = infinite_split_count
+        bt, trade_df = run_raor_v22_backtest(
+            ticker=ticker,
+            split_count=infinite_split_count,
+            first_loc_buffer_pct=first_loc_buffer_pct,
+            fee_rate_pct=fee_percent,
+        )
+        v22_designated = 10.0 if ticker == "TQQQ" else 12.0
+        strategy_name = f"라오어 무한매수법 2.2 통합 원문엔진 / {ticker}"
+        strategy_inputs = f"""
+        <div class="input-row">
+            <label>분할횟수
+                <select name="infinite_split_count">
+                    <option value="20" {"selected" if infinite_split_count == 20 else ""}>20</option>
+                    <option value="30" {"selected" if infinite_split_count == 30 else ""}>30</option>
+                    <option value="40" {"selected" if infinite_split_count == 40 else ""}>40</option>
+                </select>
+            </label>
+            <label>첫매수 LOC 여유율(%) <input type="number" step="0.1" min="0" max="30" name="first_loc_buffer_pct" value="{first_loc_buffer_pct}"></label>
+            <label>지정가 매도(원문 고정) <input type="number" readonly value="{v22_designated}"></label>
+        </div>
+        <div class="optimizer-box">
+            <h3>V2.2 통합 원문엔진 검증 포인트</h3>
+            <div class="input-row">
+                <div class="mini-info"><b>별% 공식</b><br>{'10 - T/2 × (40/a)' if ticker == 'TQQQ' else '12 - T×0.6 × (40/a)'}</div>
+                <div class="mini-info"><b>매수/매도 가격분리</b><br>매수=별가격-0.01 / 매도=별가격</div>
+                <div class="mini-info"><b>전반/후반</b><br>T &lt; a/2 전반전, T ≥ a/2 후반전</div>
+                <div class="mini-info"><b>매도</b><br>1/4 별LOC + 3/4 지정가 {v22_designated:g}%</div>
+            </div>
+        </div>
+        <p class="small-note">V2.2는 하나의 통합 전략입니다. TQQQ/SOXL을 별도 버전으로 나누지 않고, 티커별 원문 공식만 자동 적용합니다. 큰수매수는 주문거부/RPA 예외라 기본 백테스트에는 넣지 않았습니다. 첫매수 세부 원문은 추가 확인 대상으로 로그에 FirstBuyPolicy를 남깁니다.</p>
         """
 
     elif strategy == "raor4_step24o":
@@ -3421,7 +4310,8 @@ def home():
     active_days = cycle_status["active_days"]
     cycle_detail = make_cycle_detail_summary(trade_df, bt, split_count, cycle_status)
     raor_validation_html = make_raor_validation_html(bt, trade_df, ticker, split_count) if str(strategy).startswith("raor4_step24") else ""
-    step24m_execution_html = make_step24m_execution_validation_html(bt, trade_df) if strategy in ["raor4_step24m", "raor4_step24n", "raor4_step24o", "raor4_step24p", "raor4_step24q", "raor4_step24r"] else ""
+    step24m_execution_html = make_step24m_execution_validation_html(bt, trade_df) if strategy in ["raor4_step24m", "raor4_step24n", "raor4_step24o", "raor4_step24p", "raor4_step24q", "raor4_step24r", "raor4_step24s", "raor4_step24t", "raor4_step24u"] else ""
+    step24u_gap_html = make_step24u_no_fill_gap_html(bt, split_count) if strategy in ["raor4_step24w", "raor4_step24v", "raor4_step24u", "raor4_step24t", "raor4_step24s", "raor4_step24r", "raor4_step24q", "raor4_step24p", "raor4_step24o", "raor4_step24n", "raor4_step24m"] else ""
 
 
     # =========================
@@ -3544,6 +4434,65 @@ def home():
     )
 
 
+
+    # =========================
+    # Step24Y~25C 보조 패널
+    # =========================
+    stage_helper_html = ""
+    if str(strategy).startswith("raor4_step25") or strategy in ["raor4_step24y", "raor4_step24z", "raor_v22"]:
+        current_signal = "매도 검토" if latest_mode in ["과열", "상승"] and current_split > 0 else ("신규/추가 LOC 검토" if current_split < split_count else "보유/대기")
+        est_buy_loc = latest_close * (1 + first_loc_buffer_pct / 100.0)
+        est_designated = latest_close * (1 + designated_sell_pct / 100.0)
+        preset_json = json.dumps({"ticker": ticker, "strategy": strategy, "split": int(infinite_split_count), "first_loc": float(first_loc_buffer_pct), "designated_sell_pct": float(designated_sell_pct), "fee_percent": float(fee_percent)}, ensure_ascii=False, indent=2)
+        stage_helper_html = f"""
+        <div class="card step25-roadmap-card">
+            <h2>24Y 후보 선택 도우미</h2>
+            <div class="grid">
+                <div class="metric positive"><h3>현재 설정</h3><p>{infinite_split_count}분할</p></div>
+                <div class="metric"><h3>첫매수 LOC</h3><p>{first_loc_buffer_pct:.1f}%</p></div>
+                <div class="metric"><h3>지정가 매도</h3><p>{designated_sell_pct:.1f}%</p></div>
+                <div class="metric warning"><h3>선택 기준</h3><p>Robust</p></div>
+            </div>
+            <p class="small-note">후보 선택은 CAGR 단독 1위가 아니라 MDD, 2022 방어, 최대 공백, 완료주기, 주변 안정성을 함께 봅니다.</p>
+        </div>
+        <div class="card step25-roadmap-card">
+            <h2>24Z 프리셋 저장 준비</h2>
+            <p>현재 설정을 JSON 프리셋으로 저장할 수 있는 형태로 정리했습니다. 다음에는 파일 저장/불러오기 버튼으로 확장 가능합니다.</p>
+            <pre class="step24x-log">{preset_json}</pre>
+        </div>
+        <div class="card step25-roadmap-card">
+            <h2>25A TQQQ/SOXL 동시 비교 준비</h2>
+            <div class="grid">
+                <div class="metric"><h3>현재 티커</h3><p>{ticker}</p></div>
+                <div class="metric positive"><h3>현재 CAGR</h3><p>{cagr:.2f}%</p></div>
+                <div class="metric danger"><h3>현재 MDD</h3><p>{mdd:.2f}%</p></div>
+                <div class="metric"><h3>비교 대상</h3><p>TQQQ/SOXL</p></div>
+            </div>
+            <p class="small-note">25A 정식판에서는 같은 설정으로 TQQQ/SOXL을 동시에 돌려 공통 안정 후보를 찾는 화면으로 확장합니다.</p>
+        </div>
+        <div class="card step25-roadmap-card">
+            <h2>25B 원문 검증 / 스프레드시트 교차검증 체크</h2>
+            <p class="small-note"><b>Step25D-3 정리:</b> 무한매수법 2.2는 기본형/수치변화로 나누지 않고 하나의 전략으로 취급합니다. TQQQ는 10% 계열, SOXL은 12%·0.6계수 계열을 티커별 공식으로 자동 적용합니다.</p>
+            <div class="table-wrap"><table border="1" cellpadding="6" cellspacing="0">
+                <tr><th>항목</th><th>상태</th><th>확인 기준</th></tr>
+                <tr><td>첫매수 LOC</td><td>확인 가능</td><td>전날종가보다 10~15% 위</td></tr>
+                <tr><td>별LOC 매수/매도</td><td>확인 가능</td><td>BuyLOC=Star-0.01 / SellLOC=Star</td></tr>
+                <tr><td>쿼터/지정가 매도</td><td>확인 가능</td><td>1/4 별LOC + 3/4 평단대비 지정가</td></tr>
+                <tr><td>구글시트 교차검증</td><td>준비</td><td>시트 열/계산식 맵핑 후 자동 비교</td></tr>
+            </table></div>
+        </div>
+        <div class="card step25-roadmap-card">
+            <h2>25C RPA 주문 신호 출력 준비</h2>
+            <div class="grid">
+                <div class="metric warning"><h3>오늘 신호</h3><p>{current_signal}</p></div>
+                <div class="metric"><h3>참고 LOC</h3><p>${est_buy_loc:.2f}</p></div>
+                <div class="metric"><h3>참고 지정가</h3><p>${est_designated:.2f}</p></div>
+                <div class="metric"><h3>진행 분할</h3><p>{current_split}/{split_count}</p></div>
+            </div>
+            <p class="small-note">이 값은 RPA 연결용 화면 준비 신호입니다. 실제 주문 전에는 Step25B 교차검증과 중복주문 방지 모듈이 필요합니다.</p>
+        </div>
+        """
+
     # =========================
     # 딥마이닝 TOP50
 
@@ -3553,11 +4502,11 @@ def home():
     recommend_card_html = ""
 
     if action_mode == "deepmine":
-        if strategy in ["raor4_step24r", "raor4_step24q", "raor4_step24p", "raor4_step24o"]:
+        if strategy in ["raor4_step25c", "raor4_step25b", "raor4_step25a", "raor4_step24z", "raor4_step24y", "raor4_step24x", "raor4_step24w", "raor4_step24v", "raor4_step24u", "raor4_step24t", "raor4_step24s", "raor4_step24r", "raor4_step24q", "raor4_step24p", "raor4_step24o"]:
             deepmine_table_html = build_step24p_optimizer_html(
                 ticker=ticker, fee_percent=fee_percent, mode="deepmine", min_cagr=min_cagr, max_mdd=max_mdd, min_win=min_win, min_pf=min_pf,
                 split_values_text=opt_split_values, first_loc_min=opt_first_loc_min, first_loc_max=opt_first_loc_max, first_loc_step=opt_first_loc_step,
-                designated_min=opt_designated_min, designated_max=opt_designated_max, designated_step=opt_designated_step, score_mode=score_mode, display_limit=opt_display_limit, strategy_key=(strategy if strategy in ["raor4_step24r", "raor4_step24q"] else "raor4_step24p"),
+                designated_min=opt_designated_min, designated_max=opt_designated_max, designated_step=opt_designated_step, score_mode=score_mode, display_limit=opt_display_limit, strategy_key=(strategy if strategy in ["raor4_step25c", "raor4_step25b", "raor4_step25a", "raor4_step24z", "raor4_step24y", "raor4_step24x", "raor4_step24w", "raor4_step24v", "raor4_step24u", "raor4_step24t", "raor4_step24s", "raor4_step24r", "raor4_step24q"] else "raor4_step24p"),
             )
             recommend_card = None
         else:
@@ -3615,13 +4564,23 @@ def home():
             """
 
 
+
+    if action_mode == "robust":
+        if strategy in ["raor4_step25c", "raor4_step25b", "raor4_step25a", "raor4_step24z", "raor4_step24y", "raor4_step24x", "raor4_step24w", "raor4_step24v", "raor4_step24u", "raor4_step24t", "raor4_step24s", "raor4_step24r", "raor4_step24q", "raor4_step24p", "raor4_step24o"]:
+            optimizer_html = build_step24w_robust_mining_html(ticker=ticker, fee_percent=fee_percent, split_values_text=opt_split_values, first_loc_min=opt_first_loc_min, first_loc_max=opt_first_loc_max, first_loc_step=opt_first_loc_step, designated_min=opt_designated_min, designated_max=opt_designated_max, designated_step=opt_designated_step, display_limit=opt_display_limit, score_mode=score_mode)
+        else:
+            optimizer_html = '<div class="card"><h2>Robust Mining</h2><p>Step24 원문엔진에서만 지원합니다.</p></div>'
+
+    if action_mode == "robust_live":
+        optimizer_html = build_step24x_live_panel_html(ticker=ticker, fee_percent=fee_percent, split_values_text=opt_split_values, first_loc_min=opt_first_loc_min, first_loc_max=opt_first_loc_max, first_loc_step=opt_first_loc_step, designated_min=opt_designated_min, designated_max=opt_designated_max, designated_step=opt_designated_step, display_limit=opt_display_limit, score_mode=score_mode)
+
     # =========================
     if action_mode == "optimizer":
-        if strategy in ["raor4_step24r", "raor4_step24q", "raor4_step24p", "raor4_step24o"]:
+        if strategy in ["raor4_step25c", "raor4_step25b", "raor4_step25a", "raor4_step24z", "raor4_step24y", "raor4_step24x", "raor4_step24w", "raor4_step24v", "raor4_step24u", "raor4_step24t", "raor4_step24s", "raor4_step24r", "raor4_step24q", "raor4_step24p", "raor4_step24o"]:
             optimizer_html = build_step24p_optimizer_html(
                 ticker=ticker, fee_percent=fee_percent, mode="optimizer", min_cagr=min_cagr, max_mdd=max_mdd, min_win=min_win, min_pf=min_pf,
                 split_values_text=opt_split_values, first_loc_min=opt_first_loc_min, first_loc_max=opt_first_loc_max, first_loc_step=opt_first_loc_step,
-                designated_min=opt_designated_min, designated_max=opt_designated_max, designated_step=opt_designated_step, score_mode=score_mode, display_limit=opt_display_limit, strategy_key=(strategy if strategy in ["raor4_step24r", "raor4_step24q"] else "raor4_step24p"),
+                designated_min=opt_designated_min, designated_max=opt_designated_max, designated_step=opt_designated_step, score_mode=score_mode, display_limit=opt_display_limit, strategy_key=(strategy if strategy in ["raor4_step25c", "raor4_step25b", "raor4_step25a", "raor4_step24z", "raor4_step24y", "raor4_step24x", "raor4_step24w", "raor4_step24v", "raor4_step24u", "raor4_step24t", "raor4_step24s", "raor4_step24r", "raor4_step24q"] else "raor4_step24p"),
             )
         else:
             optimizer_html = build_optimizer_result_html(ticker, strategy)
@@ -3642,7 +4601,11 @@ def home():
             source_cycles = sorted(completed_id_set)
             for cid in source_cycles[-100:]:
                 g_bt = bt[pd.to_numeric(bt["CycleId"], errors="coerce").fillna(0).astype(int) == cid].copy()
-                g_tr = trade_df[pd.to_numeric(trade_df["CycleId"], errors="coerce").fillna(0).astype(int) == cid].copy() if (trade_df is not None and not trade_df.empty and "CycleId" in trade_df.columns) else pd.DataFrame()
+                if trade_df is not None and not trade_df.empty and "CycleId" in trade_df.columns:
+                    sell_df_for_cycle = get_sell_trade_df(trade_df)
+                    g_tr = sell_df_for_cycle[pd.to_numeric(sell_df_for_cycle["CycleId"], errors="coerce").fillna(0).astype(int) == cid].copy()
+                else:
+                    g_tr = pd.DataFrame()
                 start_v = g_bt["Date"].min() if not g_bt.empty else (g_tr["CycleStartDate"].dropna().iloc[0] if not g_tr.empty and "CycleStartDate" in g_tr.columns and not g_tr["CycleStartDate"].dropna().empty else pd.NaT)
                 end_v = g_bt["Date"].max() if not g_bt.empty else (g_tr["SellDate"].max() if not g_tr.empty and "SellDate" in g_tr.columns else pd.NaT)
                 profit_v = float(g_tr["Profit"].fillna(0).sum()) if not g_tr.empty and "Profit" in g_tr.columns else 0.0
@@ -3705,27 +4668,41 @@ def home():
 
     trade_rows = ""
     if not trade_df.empty:
-        for _, row in trade_df.tail(20).sort_values("SellDate", ascending=False).iterrows():
+        trade_view = trade_df.copy()
+        sort_col = "EventDate" if "EventDate" in trade_view.columns else "SellDate"
+        if sort_col in trade_view.columns:
+            trade_view[sort_col] = pd.to_datetime(trade_view[sort_col], errors="coerce")
+            trade_view = trade_view.sort_values(sort_col, ascending=False)
+        for _, row in trade_view.head(40).iterrows():
+            event_side = str(row.get("EventSide", row.get("OrderType", ""))).upper()
+            buy_amt = float(row.get("BuyAmount", 0) or 0)
+            sell_amt = float(row.get("SellAmount", 0) or 0)
+            profit = float(row.get("Profit", 0) or 0)
+            ret = float(row.get("ReturnPct", 0) or 0)
             trade_rows += f"""
             <tr>
                 <td>{row.get("CycleId", "")}</td>
-                <td>{row.get("CycleStartDate", "")}</td>
-                <td>{row.get("BuyDate", "")}</td>
-                <td>{row.get("SellDate", "")}</td>
+                <td>{fmt_log_date(row.get("CycleStartDate", ""))}</td>
+                <td>{fmt_log_date(row.get("EventDate", row.get("SellDate", "")))}</td>
+                <td>{event_side}</td>
+                <td>{fmt_log_date(row.get("BuyEventDate", ""))}</td>
+                <td>{fmt_log_date(row.get("SellEventDate", ""))}</td>
+                <td>{fmt_log_date(row.get("LastBuyDate", ""))}</td>
                 <td>{row.get("HoldDays", 0)}</td>
-                <td>{row.get("BuyAmount", 0):,.0f}</td>
-                <td>{row.get("SellAmount", 0):,.0f}</td>
-                <td>{row.get("Profit", 0):,.0f}</td>
-                <td>{row.get("ReturnPct", 0):.2f}%</td>
-                <td>{row.get("MAE", 0):.2f}%</td>
-                <td>{row.get("MFE", 0):.2f}%</td>
+                <td>{row.get("LastBuyHoldDays", 0)}</td>
+                <td>{buy_amt:,.0f}</td>
+                <td>{sell_amt:,.0f}</td>
+                <td>{profit:,.0f}</td>
+                <td>{ret:.2f}%</td>
+                <td>{row.get("OrderPrice", 0):,.2f}</td>
+                <td>{row.get("OrderQty", 0):,.4f}</td>
                 <td>{row.get("Reason", "")}</td>
             </tr>
             """
 
     trade_log_html = f"""
     <div class="card">
-        <h2>매매로그 / 승률 / 보유일 분석</h2>
+        <h2>Trade Event Log / 승률 / 보유일 분석</h2>
         <div class="summary-grid">
             <p>총 거래수: <b>{trade_summary["trade_count"]}</b></p>
             <p>수익매도: <b>{trade_summary["win_count"]}</b></p>
@@ -3738,23 +4715,66 @@ def home():
             <p>최대 분할: <b>{trade_summary["max_split"]:.1f} / {split_count}</b></p>
         </div>
 
+        <p class="small-note">※ Step25D-6-2부터 이 표는 실제 BUY/SELL 이벤트 기준입니다. CycleStartDate, EventDate, BuyEventDate, SellEventDate, LastBuyDate를 분리해 장기 주기가 날짜 점프처럼 보이는 문제를 줄였습니다. 승률/거래수 성과 집계는 SELL 이벤트만 사용합니다.</p>
         <div class="table-wrap">
             <table border="1" cellpadding="6" cellspacing="0">
                 <tr>
                     <th>주기</th>
                     <th>주기시작일</th>
-                    <th>매수일</th>
-                    <th>매도일</th>
-                    <th>보유일</th>
+                    <th>이벤트일</th>
+                    <th>구분</th>
+                    <th>매수이벤트일</th>
+                    <th>매도이벤트일</th>
+                    <th>마지막매수일</th>
+                    <th>주기보유일</th>
+                    <th>마지막매수후일</th>
                     <th>매수금액</th>
                     <th>매도금액</th>
                     <th>손익</th>
                     <th>수익률</th>
-                    <th>MAE</th>
-                    <th>MFE</th>
+                    <th>주문가</th>
+                    <th>수량</th>
                     <th>사유</th>
                 </tr>
                 {trade_rows}
+            </table>
+        </div>
+    </div>
+    """
+
+
+    order_plan_rows = ""
+    if bt is not None and not bt.empty:
+        op = bt.copy()
+        if "Action" in op.columns:
+            op = op[~op["Action"].astype(str).eq("관망")].copy()
+        if "Date" in op.columns:
+            op = op.sort_values("Date", ascending=False)
+        for _, row in op.head(40).iterrows():
+            order_plan_rows += f"""
+            <tr>
+                <td>{fmt_log_date(row.get("Date", ""))}</td>
+                <td>{row.get("CycleId", "")}</td>
+                <td>{float(row.get("TBefore", 0) or 0):.2f}</td>
+                <td>{float(row.get("TAfter", row.get("T", 0)) or 0):.2f}</td>
+                <td>{row.get("PhaseBefore", "")}</td>
+                <td>{row.get("PhaseAfter", row.get("Mode", ""))}</td>
+                <td>{row.get("Action", "")}</td>
+                <td>{row.get("OrderPlan", "")}</td>
+                <td>{"Y" if bool(row.get("DailyCandleOrderAmbiguous", False)) else ""}</td>
+            </tr>
+            """
+
+    order_plan_log_html = f"""
+    <div class="card">
+        <h2>Order Plan Log</h2>
+        <p class="small-note">※ bt 일별 행에서 주문계획이 있거나 실제 액션이 발생한 최근 40일입니다. V2.2 공식 자체는 변경하지 않았고, 표시/진단용 로그만 분리했습니다.</p>
+        <div class="table-wrap">
+            <table border="1" cellpadding="6" cellspacing="0">
+                <tr>
+                    <th>날짜</th><th>주기</th><th>TBefore</th><th>TAfter</th><th>전상태</th><th>후상태</th><th>액션</th><th>주문계획</th><th>일봉순서불명확</th>
+                </tr>
+                {order_plan_rows}
             </table>
         </div>
     </div>
@@ -3842,36 +4862,83 @@ def home():
     start_day_options = _select_options(day_values, start_d, "일")
     end_day_options = _select_options(day_values, end_d, "일")
 
+    # Step24W-2: action_mode 결과가 있을 때는 서버 렌더 단계부터 Optimizer 패널을 기본 활성화한다.
+    # 기존에는 JS가 늦게 패널을 전환하거나 실패하면 결과표가 숨겨져 보일 수 있었다.
+    seed_initial_panel = "optimizer" if action_mode in ["deepmine", "optimizer", "robust", "robust_live"] else "dashboard"
+    seed_dashboard_active = "active" if seed_initial_panel == "dashboard" else ""
+    seed_optimizer_active = "active" if seed_initial_panel == "optimizer" else ""
+    seed_results_active = ""
+    seed_charts_active = ""
+
+    # Step24W-3: robust 결과는 Optimizer 패널 최상단에 먼저 표시한다.
+    # 기존에는 Step18~21/연도별 분석 뒤쪽에 붙어서 사용자가 결과표를 못 본 것처럼 느낄 수 있었다.
+    robust_top_html = optimizer_html if action_mode in ["robust", "robust_live"] else ""
+    optimizer_bottom_html = "" if action_mode in ["robust", "robust_live"] else optimizer_html
+
+    if strategy == "raor_v22":
+        engine_note_html = """
+        <div class=\"step24r-lab-note\">
+            <b>V2.2 원문 검증 모드:</b> 현재 화면은 V2.2 통합 원문엔진의 공식/체결/로그 검증을 우선합니다. RSI 모드와 Step20 연구용 프리셋은 숨김 처리했습니다.
+            <div class=\"step24r-progress-plan\">
+                <div>1. 별% 공식</div><div>2. 매수/매도 가격분리</div><div>3. 전반/후반 매수</div><div>4. 1/4 LOC + 3/4 지정가</div>
+            </div>
+        </div>
+        """
+        action_buttons_html = """<button type=\"submit\" name=\"action_mode\" value=\"backtest\">V2.2 백테스트</button><span class=\"small-note\">Optimizer/DeepMining/Robust Mining은 V2.2 엔진 검증 후 별도 연결 예정입니다.</span>"""
+        status_info_html = """<p>주간 RSI: <b>미사용</b></p><div class=\"mode\">현재 모드: 무한매수 V2.2</div>"""
+        walkforward_today_html = ""
+        robust_top_html = ""
+        optimizer_bottom_html = ""
+    else:
+        engine_note_html = """
+        <div class=\"step24r-lab-note\">
+            <b>Step24X 과최적화 방어 Robust Mining:</b> 매매 엔진은 Step24Q/R/S/T/U/V와 동일하게 유지하고, 원문 범위 안 후보만 대상으로 전체성과·최근 3년·2022 방어·무체결 공백·주변값 안정성을 함께 평가합니다.
+            <div class=\"step24r-progress-plan\">
+                <div>1. Robust Score</div><div>2. 구간 분리 검증</div><div>3. 주변값 안정성</div><div>4. 과최적화 위험도</div>
+            </div>
+        </div>
+        """
+        action_buttons_html = """<button type=\"submit\" name=\"action_mode\" value=\"backtest\">백테스트</button>
+        <button type=\"submit\" name=\"action_mode\" value=\"deepmine\">딥마이닝 TOP50</button>
+        <button type=\"submit\" name=\"action_mode\" value=\"optimizer\">Optimizer TOP100</button>
+        <button type=\"submit\" name=\"action_mode\" value=\"robust_live\">실시간 Robust Mining</button>
+        <button type=\"submit\" name=\"action_mode\" value=\"robust\">과최적화 방어 딥마이닝</button>"""
+        status_info_html = f"""<p>주간 RSI: {latest_rsi}</p><div class=\"mode\">현재 모드: {latest_mode}</div>"""
+
     html = f"""
 <html>
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{ticker} Strategy Lab</title>
+    <title>Sunny's Test</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
     <style>
         body {{
             font-family: Arial, sans-serif;
             background: radial-gradient(circle at top left, #eef6ff 0, #f7fafc 28%, #eef2f7 100%);
-            padding: 28px 28px 28px 300px;
+            padding: 24px 24px 24px 188px;
             color: #111827;
         }}
         .seed-sidebar {{
-            position: fixed; top: 18px; left: 18px; bottom: 18px; width: 244px;
+            position: fixed; top: 16px; left: 16px; bottom: 16px; width: 150px;
             background: linear-gradient(180deg, #08111f, #111827); color: white;
-            border-radius: 24px; padding: 20px; box-shadow: 0 24px 80px rgba(15,23,42,.28); z-index: 20;
+            border-radius: 20px; padding: 14px; box-shadow: 0 24px 80px rgba(15,23,42,.28); z-index: 20;
         }}
-        .seed-brand {{ font-weight: 900; font-size: 22px; letter-spacing: -0.5px; margin-bottom: 6px; }}
-        .seed-brand-sub {{ color: #9ca3af; font-size: 12px; line-height: 1.45; margin-bottom: 22px; }}
+        .seed-brand {{ font-weight: 900; font-size: 18px; letter-spacing: -0.5px; margin-bottom: 6px; }}
+        .seed-brand-sub {{ color: #9ca3af; font-size: 12px; line-height: 1.45; margin-bottom: 14px; }}
         .seed-nav {{ display: grid; gap: 8px; }}
-        .seed-nav a, .seed-nav span {{
-            display: block; color: #dbeafe; text-decoration: none; padding: 11px 12px; border-radius: 14px;
-            background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.06); font-weight: 700; font-size: 13px;
+        .seed-nav a, .seed-nav span, .seed-nav button {{
+            display: block; color: #dbeafe; text-decoration: none; padding: 9px 9px; border-radius: 12px;
+            background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.06); font-weight: 800; font-size: 12px;
         }}
-        .seed-nav a:hover {{ background: rgba(37,99,235,.35); }}
+        .seed-nav a:hover, .seed-nav button:hover {{ background: rgba(37,99,235,.35); }}
         .seed-nav .active {{ background: linear-gradient(90deg,#2563eb,#22c55e); color: white; }}
-        .seed-shell {{ max-width: 1420px; margin: 0 auto; }}
+        .seed-nav button {{ width:100%; text-align:left; cursor:pointer; font-family:inherit; }}
+        .seed-panel {{ display:none; }}
+        .seed-panel.active {{ display:block; }}
+        .seed-panel-title {{ margin: 0 0 14px 0; padding: 18px 22px; border-radius: 18px; background:#fff; box-shadow:0 6px 20px rgba(15,23,42,.06); font-size:22px; }}
+        .seed-shell {{ max-width: none; width: 100%; margin: 0; }}
         .seed-topbar {{
             background: rgba(255,255,255,.78); backdrop-filter: blur(12px); border: 1px solid rgba(226,232,240,.9);
             border-radius: 22px; padding: 14px 18px; display: flex; justify-content: space-between; align-items: center; gap: 12px;
@@ -4161,6 +5228,14 @@ def home():
         .step24q-table tr.cand-defense td {{ background: #eff6ff; }}
         .step24q-table tr.cand-slow td {{ background: #fff7ed; }}
         .step24q-table tr.cand-watch td {{ background: #ffffff; }}
+        .step24v-compare-card {{ border-top: 4px solid #2563eb; }}
+        .step24v-cleanup-card {{ border-top: 4px solid #f59e0b; }}
+        .step24w-robust-card {{ border-top: 4px solid #10b981; }}
+        .step24x-live-card {{ border-top: 4px solid #2563eb; }}
+        .step24x-live-table-card {{ border-top: 4px solid #10b981; }}
+        .step24x-log {{ max-height: 260px; overflow:auto; white-space: pre-wrap; background:#0f172a; color:#dbeafe; padding:14px; border-radius:14px; font-size:12px; line-height:1.5; }}
+        .step24w-robust-table-card {{ border-top: 4px solid #2563eb; }}
+        .step24v-cleanup-card td:nth-child(4) {{ font-weight: 700; }}
         .applied-candidate {{
             border-left: 6px solid #22c55e;
             background: #f0fdf4;
@@ -4210,33 +5285,34 @@ def home():
 <body>
 <div class="seed-sidebar">
     <div class="seed-brand">Infinite Lab</div>
-    <div class="seed-brand-sub">Step24R · RAOR Original Engine<br>SEED 스타일 UI 리디자인 / 실시간 진행률 준비판</div>
+    <div class="seed-brand-sub">Step25D-6 · RAOR Original Engine<br>V2.2 로그보정 · 쿼터손절 검증</div>
     <div class="seed-nav">
-        <span class="active">대시보드</span>
-        <a href="#step24-results">Optimizer / DeepMining</a>
-        <a href="#charts-section">차트</a>
-        <a href="#trade-log-section">매매 로그</a>
-        <span>실시간 진행률: 준비 구조</span>
+        <button type="button" class="{seed_dashboard_active}" data-panel-target="dashboard">대시보드</button>
+        <button type="button" class="{seed_optimizer_active}" data-panel-target="optimizer">Optimizer</button>
+        <button type="button" class="{seed_results_active}" data-panel-target="results">검증/로그</button>
+        <button type="button" class="{seed_charts_active}" data-panel-target="charts">차트</button>
+        <span>25D-6: V2.2 로그보정</span>
     </div>
 </div>
 <div class="seed-shell">
 <div class="seed-topbar">
-    <h1>{ticker} Infinite Lab</h1>
+    <h1>Sunny's Test</h1>
     <div class="seed-badges"><span class="seed-badge">{strategy_name}</span><span class="seed-badge">{start_date} ~ {end_date}</span><span class="seed-badge">Fee {fee_percent:.3f}%</span></div>
 </div>
 
 <div id="step24LiveOverlay" class="step24-live-overlay">
     <div class="step24-live-box">
-        <div class="step24-live-title">Step24R 후보 검증 진행 중</div>
+        <div class="step24-live-title">Step24X 후보 검증 진행 중</div>
         <div class="step24-live-sub">브라우저가 서버 계산을 기다리는 동안 진행형 UI를 먼저 표시합니다. 계산 완료 후 TOP 후보표가 한 번에 출력됩니다.</div>
         <div><b id="step24LivePct">0%</b> · <span id="step24LiveStatus">검증 준비 중...</span></div>
         <div class="step24-live-bar-shell"><div id="step24LiveBar" class="step24-live-bar"></div></div>
         <div id="step24LiveLog" class="step24-live-log">- 파라미터 조합 생성 대기
-- Step24R/Q/P 원문엔진 호출 준비
+- Step24X/W/V/U/T/S/R/Q/P 원문엔진 호출 준비
 - 기존 RSI/오리지널 결과와 분리</div>
     </div>
 </div>
 
+<section id="panel-dashboard" class="seed-panel {seed_dashboard_active}" data-seed-panel="dashboard">
 <div class="card hero">
     <h1>{ticker} 전략 실험실</h1>
 
@@ -4272,51 +5348,19 @@ def home():
         <div class="input-row">
             <label>전략 선택
                 <select name="strategy" onchange="syncAllDates(); this.form.submit()">
-                    <optgroup label="현재 사용">
-                        <option value="rsi" {"selected" if strategy == "rsi" else ""}>RSI 커스텀</option>
-                        <option value="raor4_step24r" {"selected" if strategy == "raor4_step24r" else ""}>라오어 무한매수4.0 원문엔진 / Step24R</option>
-                        <option value="raor4_step24q" {"selected" if strategy == "raor4_step24q" else ""}>라오어 무한매수4.0 원문엔진 / Step24Q</option>
-                        <option value="raor4_step24p" {"selected" if strategy == "raor4_step24p" else ""}>라오어 무한매수4.0 원문엔진 / Step24P</option>
-                        <option value="raor4_step24o" {"selected" if strategy == "raor4_step24o" else ""}>라오어 무한매수4.0 원문엔진 / Step24O</option>
-                        <option value="raor4_step24n" {"selected" if strategy == "raor4_step24n" else ""}>라오어 무한매수4.0 원문엔진 / Step24N</option>
-                        <option value="raor4_step24m" {"selected" if strategy == "raor4_step24m" else ""}>라오어 무한매수4.0 원문엔진 / Step24M</option>
-                        <option value="raor4_step24l" {"selected" if strategy == "raor4_step24l" else ""}>라오어 무한매수4.0 원문엔진 / Step24L</option>
-                        <option value="raor4_step24h" {"selected" if strategy == "raor4_step24h" else ""}>라오어 무한매수4.0 원문엔진 / Step24H</option>
-                        <option value="raor4_step24g" {"selected" if strategy == "raor4_step24g" else ""}>라오어 무한매수4.0 원문엔진 / Step24G</option>
-                        <option value="raor4_step24f" {"selected" if strategy == "raor4_step24f" else ""}>라오어 무한매수4.0 원문엔진 / Step24F</option>
-                        <option value="raor4_step24e" {"selected" if strategy == "raor4_step24e" else ""}>라오어 무한매수4.0 원문엔진 / Step24E</option>
-                    </optgroup>
-                    <optgroup label="이전 연구용">
-                        <option value="infinite4_v5" {"selected" if strategy == "infinite4_v5" else ""}>무한매수 4.0 V5 / Step23E 동적별지점</option>
-                        <option value="infinite4_v4" {"selected" if strategy == "infinite4_v4" else ""}>무한매수 4.0 V4 / Step23A-B-C</option>
-                        <option value="infinite4_v3" {"selected" if strategy == "infinite4_v3" else ""}>무한매수 4.0 V3</option>
-                        <option value="infinite4_v2" {"selected" if strategy == "infinite4_v2" else ""}>무한매수 4.0 V2</option>
-                        <option value="infinite4" {"selected" if strategy == "infinite4" else ""}>무한매수 4.0 V1</option>
-                        <option value="original_upgrade" {"selected" if strategy == "original_upgrade" else ""}>오리지널 2.0</option>
-                        <option value="original" {"selected" if strategy == "original" else ""}>오리지널</option>
-                    </optgroup>
-                    <optgroup label="준비중">
-                        <option value="tteolsa" disabled>떨사오팔 준비중</option>
-                        <option value="jongsajongpal" disabled>종사종팔 준비중</option>
-                    </optgroup>
+                    <option value="raor_v22" {"selected" if strategy == "raor_v22" else ""}>라오어 무한매수법 2.2 통합 원문엔진</option>
+                    <option value="raor4_step25d" {"selected" if strategy == "raor4_step25d" else ""}>라오어 무한매수법 4.0 원문엔진 / Step25D 검증판</option>
                 </select>
             </label>
         </div>
 
         {strategy_inputs}
 
-        <div class="step24r-lab-note">
-            <b>Step24R UI 리디자인:</b> 매매 엔진은 Step24Q와 동일하게 유지하고, 화면 구조만 SEED 스타일의 좌측 메뉴/상단 요약/카드형 패널로 정리했습니다.
-            <div class="step24r-progress-plan">
-                <div>1. 클릭 즉시 오버레이</div><div>2. 예상 조합수 표시</div><div>3. 캐시 재사용 표시</div><div>4. 24S 실시간 polling 확장 준비</div>
-            </div>
-        </div>
+        {engine_note_html}
 
         {preset_buttons_html}
 
-        <button type="submit" name="action_mode" value="backtest">백테스트</button>
-        <button type="submit" name="action_mode" value="deepmine">딥마이닝 TOP50</button>
-        <button type="submit" name="action_mode" value="optimizer">Optimizer TOP100</button>
+        {action_buttons_html}
     </form>
 
     <hr>
@@ -4324,12 +5368,13 @@ def home():
     <p>기준일: {latest_date}</p>
     <p style="color:#777;">데이터 마지막일: {daily["Date"].max().strftime("%Y-%m-%d")}</p>
     <p style="color:orange;">{data_notice}</p>
-    <p>{ticker} 종가: ${latest_close}</p>
-    <p>주간 RSI: {latest_rsi}</p>
-    <div class="mode">현재 모드: {latest_mode}</div>
+    <p>{ticker} 종가: </p>
+    {status_info_html}
 </div>
 
+{advanced_stage_html}
 {applied_candidate_html}
+{stage_helper_html}
 
 <div class="grid">
     <div class="metric {return_class}"><h3>최종자산</h3><p>{final_asset:,.0f}원</p></div>
@@ -4369,6 +5414,12 @@ def home():
     </div>
     <p>{verdict_detail}</p>
 </div>
+</section>
+
+<section id="panel-optimizer" class="seed-panel {seed_optimizer_active}" data-seed-panel="optimizer">
+<h2 class="seed-panel-title">Optimizer / DeepMining</h2>
+
+{robust_top_html}
 
 {walkforward_today_html}
 
@@ -4376,11 +5427,17 @@ def home():
 
 {strategy_param_map_html}
 
+{step24v_cleanup_html}
+
 {yearly_html}
 
 {deepmine_html}
-{optimizer_html}
+{optimizer_bottom_html}
 {recommend_card_html}
+</section>
+
+<section id="panel-results" class="seed-panel {seed_results_active}" data-seed-panel="results">
+<h2 class="seed-panel-title">검증 / 매매 로그</h2>
 
 <div class="card">
     <h2>백테스트 결과</h2>
@@ -4396,9 +5453,16 @@ def home():
 
 {step24m_execution_html}
 
+{step24u_gap_html}
+
 {cycle_summary_html}
 
 {trade_log_html}
+{order_plan_log_html}
+</section>
+
+<section id="panel-charts" class="seed-panel {seed_charts_active}" data-seed-panel="charts">
+<h2 class="seed-panel-title">차트</h2>
 
 <div class="card">
     <h2>통합 차트: 총자산 + {ticker} 가격 + 매수/매도 포인트</h2>
@@ -4420,6 +5484,7 @@ def home():
         <canvas id="monthlyChart"></canvas>
     </div>
 </div>
+</section>
 
 <script>
 const chartData = {chart_json};
@@ -4479,7 +5544,7 @@ function startStep24LiveOverlay(mode) {{
     const comboTotal = estimateStep24Combos();
     const labels = [
         "파라미터 조합 생성 중",
-        "Step24Q/P 원문엔진 백테스트 반복 실행 중",
+        "Step24V/U/T/S/R/Q/P 원문엔진 백테스트 반복 실행 중",
         "CAGR / MDD / 완료주기 계산 중",
         "후보 판정 분류 중",
         "TOP 결과표 생성 및 캐시 저장 중"
@@ -4506,19 +5571,55 @@ function startStep24LiveOverlay(mode) {{
 }}
 
 window.addEventListener("DOMContentLoaded", () => {{
-    const results = document.getElementById("step24-results");
-    if (results && "{action_mode}" !== "backtest") {{
-        setTimeout(() => results.scrollIntoView({{behavior: "smooth", block: "start"}}), 300);
+    if ("{action_mode}" !== "backtest") {{
+        setTimeout(() => activateSeedPanel("optimizer"), 250);
     }}
     document.querySelectorAll('button[name="action_mode"]').forEach(btn => {{
         btn.addEventListener("click", () => {{
             syncAllDates();
-            if (btn.value === "deepmine" || btn.value === "optimizer") {{
+            if (btn.value === "deepmine" || btn.value === "optimizer" || btn.value === "robust") {{
                 startStep24LiveOverlay(btn.value);
             }}
         }});
     }});
 }});
+
+
+function activateSeedPanel(panelName) {{
+    const panels = document.querySelectorAll(".seed-panel");
+    const buttons = document.querySelectorAll("[data-panel-target]");
+    panels.forEach(panel => {{
+        panel.classList.toggle("active", panel.dataset.seedPanel === panelName);
+    }});
+    buttons.forEach(btn => {{
+        btn.classList.toggle("active", btn.dataset.panelTarget === panelName);
+    }});
+    window.scrollTo({{top: 0, behavior: "smooth"}});
+    setTimeout(() => {{
+        if (window.assetChartInstance) window.assetChartInstance.resize();
+        if (window.ddChartInstance) window.ddChartInstance.resize();
+        if (window.monthlyChartInstance) window.monthlyChartInstance.resize();
+    }}, 120);
+}}
+
+function initSeedPanelTabs() {{
+    document.querySelectorAll("[data-panel-target]").forEach(btn => {{
+        btn.addEventListener("click", () => activateSeedPanel(btn.dataset.panelTarget));
+    }});
+    if ("{action_mode}" === "deepmine" || "{action_mode}" === "optimizer" || "{action_mode}" === "robust") {{
+        activateSeedPanel("optimizer");
+        if ("{action_mode}" === "robust") {{
+            setTimeout(() => {{
+                const target = document.getElementById("step24-results");
+                if (target) target.scrollIntoView({{behavior:"smooth", block:"start"}});
+            }}, 350);
+        }}
+    }} else {{
+        activateSeedPanel("dashboard");
+    }}
+}}
+
+window.addEventListener("DOMContentLoaded", initSeedPanelTabs);
 
 const labels = chartData.labels || [];
 const assets = chartData.assets || [];
@@ -4540,7 +5641,7 @@ function pct(value) {{
     return Number(value).toFixed(2) + "%";
 }}
 
-new Chart(document.getElementById("assetChart"), {{
+window.assetChartInstance = new Chart(document.getElementById("assetChart"), {{
     type: "line",
     data: {{
         labels: labels,
@@ -4634,7 +5735,7 @@ new Chart(document.getElementById("assetChart"), {{
     }}
 }});
 
-new Chart(document.getElementById("ddChart"), {{
+window.ddChartInstance = new Chart(document.getElementById("ddChart"), {{
     type: "line",
     data: {{
         labels: labels,
@@ -4682,7 +5783,7 @@ new Chart(document.getElementById("ddChart"), {{
     }}
 }});
 
-new Chart(document.getElementById("monthlyChart"), {{
+window.monthlyChartInstance = new Chart(document.getElementById("monthlyChart"), {{
     type: "bar",
     data: {{
         labels: monthLabels,
@@ -4781,6 +5882,7 @@ new Chart(document.getElementById("yearlyChart"), {{
     }}
 }});
 </script>
+<script src="/step24x.js"></script>
 
 </div>
 </body>

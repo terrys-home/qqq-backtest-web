@@ -6,7 +6,7 @@ RSI + 무한매수 4.0 V3
 """
 
 TICKER_LIST = [
-    "QQQ", "TQQQ", "SOXX", "SOXL", "TECL", "FAS", "USD", "NVDL", "TSLL", "SNXX",
+    "SOXL", "TQQQ",
 ]
 
 STRATEGY_LABELS = {
@@ -16,6 +16,16 @@ STRATEGY_LABELS = {
     "infinite4_v3": "무한매수4.0 V3",
     "infinite4_v4": "무한매수4.0 V4 / Step23A-B-C",
     "infinite4_v5": "무한매수4.0 V5 / Step23E 동적별지점",
+    "raor_v22": "라오어 무한매수법 2.2 원문엔진",
+    "raor4_step25d": "라오어 무한매수4.0 원문엔진 / Step25D 검증판",
+    "raor4_step25c": "라오어 무한매수4.0 원문엔진 / Step25C",
+    "raor4_step25b": "라오어 무한매수4.0 원문엔진 / Step25B",
+    "raor4_step25a": "라오어 무한매수4.0 원문엔진 / Step25A",
+    "raor4_step24z": "라오어 무한매수4.0 원문엔진 / Step24Z",
+    "raor4_step24y": "라오어 무한매수4.0 원문엔진 / Step24Y",
+    "raor4_step24x": "라오어 무한매수4.0 원문엔진 / Step24X",
+    "raor4_step24w": "라오어 무한매수4.0 원문엔진 / Step24W",
+    "raor4_step24v": "라오어 무한매수4.0 원문엔진 / Step24V",
     "raor4_step24e": "라오어 무한매수4.0 원문엔진 / Step24E",
     "raor4_step24f": "라오어 무한매수4.0 원문엔진 / Step24F",
     "raor4_step24p": "라오어 무한매수4.0 원문엔진 / Step24P",
@@ -193,6 +203,16 @@ for _ticker in TICKER_LIST:
     STRATEGY_PRESETS[_ticker].setdefault("infinite4_v3", DEFAULT_INFINITE4_V3_PRESET)
     STRATEGY_PRESETS[_ticker].setdefault("infinite4_v4", DEFAULT_INFINITE4_V4_PRESET)
     STRATEGY_PRESETS[_ticker].setdefault("infinite4_v5", DEFAULT_INFINITE4_V4_PRESET)
+    STRATEGY_PRESETS[_ticker].setdefault("raor_v22", DEFAULT_RAOR4_PRESET)
+    STRATEGY_PRESETS[_ticker].setdefault("raor4_step25d", DEFAULT_RAOR4_PRESET)
+    STRATEGY_PRESETS[_ticker].setdefault("raor4_step25c", DEFAULT_RAOR4_PRESET)
+    STRATEGY_PRESETS[_ticker].setdefault("raor4_step25b", DEFAULT_RAOR4_PRESET)
+    STRATEGY_PRESETS[_ticker].setdefault("raor4_step25a", DEFAULT_RAOR4_PRESET)
+    STRATEGY_PRESETS[_ticker].setdefault("raor4_step24z", DEFAULT_RAOR4_PRESET)
+    STRATEGY_PRESETS[_ticker].setdefault("raor4_step24y", DEFAULT_RAOR4_PRESET)
+    STRATEGY_PRESETS[_ticker].setdefault("raor4_step24x", DEFAULT_RAOR4_PRESET)
+    STRATEGY_PRESETS[_ticker].setdefault("raor4_step24w", DEFAULT_RAOR4_PRESET)
+    STRATEGY_PRESETS[_ticker].setdefault("raor4_step24v", DEFAULT_RAOR4_PRESET)
     STRATEGY_PRESETS[_ticker].setdefault("raor4_step24e", DEFAULT_RAOR4_PRESET)
     STRATEGY_PRESETS[_ticker].setdefault("raor4_step24f", DEFAULT_RAOR4_PRESET)
     STRATEGY_PRESETS[_ticker].setdefault("raor4_step24p", DEFAULT_RAOR4_PRESET)
