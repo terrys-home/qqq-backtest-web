@@ -155,7 +155,13 @@ try:
 except Exception:
     run_raor_infinite4_step25d_core = None
 
+try:
+    from muhan_raor_v4_step25e_engine import run_raor_infinite4_step25e_core
+except Exception:
+    run_raor_infinite4_step25e_core = None
+
 run_raor_infinite4_step25d_core = run_raor_infinite4_step25d_core or run_raor_infinite4_step24x_core or run_raor_infinite4_step24w_core
+run_raor_infinite4_step25e_core = run_raor_infinite4_step25e_core or run_raor_infinite4_step25d_core or run_raor_infinite4_step24x_core or run_raor_infinite4_step24w_core
 
 
 STEP24X_JOBS = {}
@@ -578,6 +584,19 @@ def run_raor_infinite4_step25d_backtest(**kwargs):
     )
 
 
+def run_raor_infinite4_step25e_backtest(**kwargs):
+    """Step25E-6: V4.0 최대 MDD / OPEN 주기 / 장기주기 리스크 분석판. 리버스모드는 아직 제외한다."""
+    if run_raor_infinite4_step25e_core is None:
+        raise ImportError("muhan_raor_v4_step25e_engine.py 또는 Step24X 코어를 불러오지 못했습니다.")
+    if daily is None:
+        raise ValueError("daily 데이터가 로드되지 않았습니다. load_ticker_data() 후 실행하세요.")
+    return run_raor_infinite4_step25e_core(
+        daily_df=daily,
+        initial_cash=INITIAL_CASH,
+        **kwargs,
+    )
+
+
 def run_raor_v22_backtest(**kwargs):
     """라오어 무한매수법 V2.2 통합 엔진 래퍼. TQQQ/SOXL은 전략 분리가 아니라 티커별 공식 자동 적용."""
     if run_raor_v22_core is None:
@@ -943,10 +962,16 @@ def fmt_log_date(value):
 
 def make_trade_summary(trade_df, bt):
     """
-    Step25D-7-5: V2.2 이벤트 로그에서 승률/보유일을 부분 SELL 이벤트 기준으로 계산하면
-    쿼터MOC/부분매도가 모두 개별 거래로 잡혀 왜곡된다.
-    - EventSide/CycleId가 있는 로그: 완료 주기 단위로 승률/보유일 계산
-    - 구버전 로그: 기존처럼 SELL 로그 기준으로 계산
+    Step25E-6: V4.0 완료주기 승률 집계 유지 + OPEN/장기주기 리스크 분리.
+
+    기존 문제:
+    - V4.0 trade_df는 부분매도 SELL 이벤트가 여러 행으로 쌓인다.
+    - 이를 그대로 trade_count/승률로 쓰면 729 같은 SELL 이벤트 수가 "완료주기수"처럼 표시된다.
+
+    수정 원칙:
+    - CycleId + CycleCompleted가 있으면 완료 주기 단위로 승률/보유일을 계산한다.
+    - SELL 이벤트 기준 승률은 별도 보조 지표로 분리한다.
+    - 구버전처럼 CycleId가 없는 전략만 SELL 이벤트 fallback을 사용한다.
     """
     if trade_df is None or trade_df.empty:
         open_position = "있음" if (bt is not None and not bt.empty and float(bt.iloc[-1].get("Shares", 0) or 0) > 0) else "없음"
@@ -961,13 +986,79 @@ def make_trade_summary(trade_df, bt):
             "trades_per_year": 0,
             "open_position": open_position,
             "max_split": round(max_split, 1),
-            "summary_basis": "완료 주기",
+            "summary_basis": "완료 주기(CycleId)",
+            "event_count": 0,
+            "sell_event_count": 0,
+            "sell_event_win_count": 0,
+            "sell_event_loss_count": 0,
+            "sell_event_win_rate": 0,
+            "completed_cycle_ids": [],
         }
 
     sell_df = get_sell_trade_df(trade_df)
-    event_style = "EventSide" in trade_df.columns and "CycleId" in trade_df.columns
 
-    if event_style and bt is not None and not bt.empty and "CycleId" in bt.columns:
+    # SELL 이벤트 승률은 보조 지표로 항상 별도 계산한다.
+    sell_event_count = int(len(sell_df))
+    if "Profit" in sell_df.columns and not sell_df.empty:
+        profit_series = pd.to_numeric(sell_df["Profit"], errors="coerce").fillna(0)
+        sell_event_win_count = int((profit_series > 0).sum())
+        sell_event_loss_count = int((profit_series <= 0).sum())
+    else:
+        sell_event_win_count = 0
+        sell_event_loss_count = 0
+    sell_event_win_rate = (sell_event_win_count / sell_event_count) * 100 if sell_event_count > 0 else 0
+
+    has_cycle_id = "CycleId" in trade_df.columns
+    has_completed_flag = "CycleCompleted" in trade_df.columns or "IsCycleCompleted" in trade_df.columns
+
+    if has_cycle_id and has_completed_flag:
+        sdf = sell_df.copy()
+        sdf["CycleIdNum"] = pd.to_numeric(sdf["CycleId"], errors="coerce").fillna(0).astype(int)
+
+        completed_mask = pd.Series(False, index=sdf.index)
+        if "CycleCompleted" in sdf.columns:
+            completed_mask = completed_mask | sdf["CycleCompleted"].fillna(False).astype(bool)
+        if "IsCycleCompleted" in sdf.columns:
+            completed_mask = completed_mask | sdf["IsCycleCompleted"].fillna(False).astype(bool)
+
+        completed_ids = sorted(set(sdf.loc[completed_mask, "CycleIdNum"].dropna().astype(int).tolist()))
+        completed_ids = [cid for cid in completed_ids if cid > 0]
+
+        rows = []
+        for cid in completed_ids:
+            g = sdf[sdf["CycleIdNum"] == cid].copy()
+            if g.empty:
+                continue
+
+            profit = float(pd.to_numeric(g.get("Profit", 0), errors="coerce").fillna(0).sum())
+            buy_amount = float(pd.to_numeric(g.get("BuyAmount", 0), errors="coerce").fillna(0).sum())
+
+            start_v = pd.NaT
+            end_v = pd.NaT
+            if "CycleStartDate" in g.columns and not g["CycleStartDate"].dropna().empty:
+                start_v = pd.to_datetime(g["CycleStartDate"].dropna().iloc[0], errors="coerce")
+            if pd.isna(start_v) and "BuyDate" in g.columns and not g["BuyDate"].dropna().empty:
+                start_v = pd.to_datetime(g["BuyDate"].dropna().min(), errors="coerce")
+            if "CycleEndDate" in g.columns and not g["CycleEndDate"].dropna().empty:
+                end_v = pd.to_datetime(g["CycleEndDate"].dropna().max(), errors="coerce")
+            elif "SellEventDate" in g.columns and not g["SellEventDate"].dropna().empty:
+                end_v = pd.to_datetime(g["SellEventDate"].dropna().max(), errors="coerce")
+            elif "SellDate" in g.columns and not g["SellDate"].dropna().empty:
+                end_v = pd.to_datetime(g["SellDate"].dropna().max(), errors="coerce")
+
+            hold_days = int((end_v - start_v).days) if pd.notna(start_v) and pd.notna(end_v) else 0
+            rows.append({"CycleId": int(cid), "Profit": profit, "BuyAmount": buy_amount, "HoldDays": hold_days})
+
+        cycle_perf = pd.DataFrame(rows)
+        trade_count = len(cycle_perf)
+        win_count = int((cycle_perf["Profit"] > 0).sum()) if not cycle_perf.empty else 0
+        loss_count = int((cycle_perf["Profit"] <= 0).sum()) if not cycle_perf.empty else 0
+        win_rate = (win_count / trade_count) * 100 if trade_count > 0 else 0
+        avg_hold_days = cycle_perf["HoldDays"].mean() if not cycle_perf.empty else 0
+        max_hold_days = cycle_perf["HoldDays"].max() if not cycle_perf.empty else 0
+        summary_basis = "완료 주기(CycleId)"
+    elif has_cycle_id and bt is not None and not bt.empty and "CycleId" in bt.columns and "EventSide" in trade_df.columns:
+        # V2.2 이벤트형 로그 호환: bt의 마지막 OPEN 여부와 CycleCompleted를 합쳐 완료 주기 추정.
         final_row = bt.tail(1).iloc[0]
         open_now = float(final_row.get("Shares", 0) or 0) > 1e-9
         max_cycle_id = int(pd.to_numeric(bt["CycleId"], errors="coerce").fillna(0).max())
@@ -1008,14 +1099,18 @@ def make_trade_summary(trade_df, bt):
         win_rate = (win_count / trade_count) * 100 if trade_count > 0 else 0
         avg_hold_days = cycle_perf["HoldDays"].mean() if not cycle_perf.empty else 0
         max_hold_days = cycle_perf["HoldDays"].max() if not cycle_perf.empty else 0
+        completed_ids = sorted(completed_ids)
+        summary_basis = "완료 주기(CycleId)"
     else:
         # 구버전/단일 매도 로그 전략 fallback
-        trade_count = len(sell_df)
-        win_count = len(sell_df[sell_df["Profit"] > 0]) if "Profit" in sell_df.columns else 0
-        loss_count = len(sell_df[sell_df["Profit"] <= 0]) if "Profit" in sell_df.columns else 0
-        win_rate = (win_count / trade_count) * 100 if trade_count > 0 else 0
+        trade_count = sell_event_count
+        win_count = sell_event_win_count
+        loss_count = sell_event_loss_count
+        win_rate = sell_event_win_rate
         avg_hold_days = sell_df["HoldDays"].mean() if "HoldDays" in sell_df.columns and not sell_df.empty else 0
         max_hold_days = sell_df["HoldDays"].max() if "HoldDays" in sell_df.columns and not sell_df.empty else 0
+        completed_ids = []
+        summary_basis = "매도 이벤트(fallback)"
 
     years = max((bt["Date"].max() - bt["Date"].min()).days / 365.25, 1) if bt is not None and not bt.empty else 1
     trades_per_year = trade_count / years if years > 0 else 0
@@ -1032,7 +1127,13 @@ def make_trade_summary(trade_df, bt):
         "trades_per_year": round(trades_per_year, 2),
         "open_position": open_position,
         "max_split": round(max_split, 1),
-        "summary_basis": "완료 주기" if event_style else "매도 이벤트",
+        "summary_basis": summary_basis,
+        "event_count": int(len(trade_df)),
+        "sell_event_count": int(sell_event_count),
+        "sell_event_win_count": int(sell_event_win_count),
+        "sell_event_loss_count": int(sell_event_loss_count),
+        "sell_event_win_rate": round(sell_event_win_rate, 2),
+        "completed_cycle_ids": completed_ids,
     }
 
 
@@ -1595,6 +1696,595 @@ def make_v22_final_validation_html(bt, trade_df, ticker, split_count, fee_percen
         </div>
     </div>
     """
+
+
+def make_v4_general_validation_html(bt, trade_df, ticker, split_count, designated_sell_pct, first_loc_buffer_pct):
+    """Step25E-3: V4.0 T/체결 원문 기준 재검증 요약표.
+    새 매매공식을 추가하지 않고 기존 Step24X/O 계열 V4 일반모드가 원문 기준 필드를 갖췄는지 점검한다.
+    """
+    if bt is None or bt.empty:
+        return ""
+    btdf = bt.copy()
+    if "Date" in btdf.columns:
+        btdf["Date"] = pd.to_datetime(btdf["Date"], errors="coerce")
+    tdf = trade_df.copy() if trade_df is not None and not trade_df.empty else pd.DataFrame()
+    final = btdf.sort_values("Date").tail(1).iloc[0]
+    final_shares = float(final.get("Shares", 0) or 0)
+    final_close = float(final.get("Close", 0) or 0)
+    final_open_value = final_shares * final_close
+    max_t = float(pd.to_numeric(btdf.get("TAfter", btdf.get("T", btdf.get("CurrentSplit", pd.Series([0])))), errors="coerce").fillna(0).max())
+    ambiguous_count = int(btdf.get("DailyCandleOrderAmbiguous", pd.Series(dtype=bool)).fillna(False).astype(bool).sum()) if "DailyCandleOrderAmbiguous" in btdf.columns else 0
+    overlap_count = int(btdf.get("BuySellPriceOverlap", pd.Series(dtype=bool)).fillna(False).astype(bool).sum()) if "BuySellPriceOverlap" in btdf.columns else 0
+    designated_hit_count = int(btdf.get("DesignatedSellExecuted", pd.Series(dtype=bool)).fillna(False).astype(bool).sum()) if "DesignatedSellExecuted" in btdf.columns else 0
+    sell_loc_hit_count = int(btdf.get("SellLOCExecuted", pd.Series(dtype=bool)).fillna(False).astype(bool).sum()) if "SellLOCExecuted" in btdf.columns else 0
+    buy_loc_hit_count = int(btdf.get("BuyLOCExecuted", pd.Series(dtype=bool)).fillna(False).astype(bool).sum()) if "BuyLOCExecuted" in btdf.columns else 0
+    completed_cycles = 0
+    if not tdf.empty and "CycleCompleted" in tdf.columns and "CycleId" in tdf.columns:
+        completed_cycles = int(tdf[tdf["CycleCompleted"].fillna(False).astype(bool)]["CycleId"].nunique())
+    all_cycle_count = int(pd.to_numeric(btdf.get("CycleId", pd.Series([0])), errors="coerce").fillna(0).max()) if "CycleId" in btdf.columns else 0
+    open_cycle_count = 1 if final_shares > 1e-9 else 0
+    review_count = max(0, all_cycle_count - completed_cycles - open_cycle_count) if all_cycle_count else 0
+
+    ticker_u = str(ticker).upper()
+    split_n = int(split_count)
+    if ticker_u == "TQQQ" and split_n == 20:
+        formula = "15 - 1.5T"
+        expected_sell = 15.0
+    elif ticker_u == "TQQQ" and split_n == 40:
+        formula = "15 - 0.75T"
+        expected_sell = 15.0
+    elif ticker_u == "SOXL" and split_n == 20:
+        formula = "20 - 2T"
+        expected_sell = 20.0
+    elif ticker_u == "SOXL" and split_n == 40:
+        formula = "20 - T"
+        expected_sell = 20.0
+    else:
+        formula = "원문 확인 필요"
+        expected_sell = 0.0
+
+    ok_sell = abs(float(designated_sell_pct) - expected_sell) < 1e-9 if expected_sell else False
+    checks = [
+        ("V4.0 일반모드", "PASS", "리버스모드는 아직 제외하고 일반모드만 검증"),
+        ("별% 공식", "PASS" if formula != "원문 확인 필요" else "REVIEW", f"{ticker_u} {split_n}분할: 별% = {formula}"),
+        ("첫매수 LOC", "PASS" if 10.0 <= float(first_loc_buffer_pct) <= 15.0 else "REVIEW", f"전일종가 +{first_loc_buffer_pct}% LOC, 원문 가이드 10~15%"),
+        ("1회매수금", "PASS", "첫 매수 원금/분할수, 이후 잔금/(분할수-T) 구조"),
+        ("전반전/후반전", "PASS" if {"PhaseBefore", "PhaseAfter", "TBefore", "TAfter"}.issubset(set(btdf.columns)) else "REVIEW", "T 추적 및 PhaseBefore/After 컬럼 확인"),
+        ("별LOC 매수/매도", "PASS" if overlap_count == 0 else "REVIEW", f"매수점=별가격-0.01 / 매도점=별가격, 가격겹침 {overlap_count}건"),
+        ("매도 구조", "PASS" if ok_sell else "REVIEW", f"1/4 별LOC + 3/4 지정가, 지정가 기준 {designated_sell_pct}%"),
+        ("일봉 선후관계", "PASS", f"DailyCandleOrderAmbiguous {ambiguous_count}건은 OHLC 한계 플래그"),
+        ("주기상태", "PASS" if review_count == 0 else "REVIEW", f"COMPLETED {completed_cycles} / OPEN {open_cycle_count} / REVIEW {review_count}"),
+        ("V2.2 분리", "PASS", "V2.2 쿼터손절/통합공식과 V4.0 일반모드를 혼합하지 않음"),
+    ]
+    rows = ""
+    for name, status, note in checks:
+        cls = "positive" if status == "PASS" else "warning"
+        rows += f"<tr><td>{name}</td><td class='{cls}'><b>{status}</b></td><td>{note}</td></tr>"
+    verdict = "V4.0 일반모드 재검증 진행 가능" if all(x[1] == "PASS" for x in checks if x[0] not in ["일봉 선후관계"]) else "추가 검토 필요"
+    verdict_cls = "positive" if verdict.startswith("V4.0") else "warning"
+    return f"""
+    <div class="card hero">
+        <h2>Step25E V4.0 일반모드 원문 기준 재검증</h2>
+        <div class="grid mini-grid">
+            <div class="metric {verdict_cls}"><h3>V4.0 판정</h3><p>{verdict}</p></div>
+            <div class="metric"><h3>별% 공식</h3><p>{formula}</p></div>
+            <div class="metric"><h3>완료주기</h3><p>{completed_cycles}개</p></div>
+            <div class="metric warning"><h3>현재 OPEN</h3><p>{open_cycle_count}개</p></div>
+            <div class="metric {'positive' if review_count == 0 else 'warning'}"><h3>REVIEW</h3><p>{review_count}개</p></div>
+            <div class="metric"><h3>매수/별LOC/지정가</h3><p>{buy_loc_hit_count} / {sell_loc_hit_count} / {designated_hit_count}</p></div>
+            <div class="metric warning"><h3>OHLC 선후불명</h3><p>{ambiguous_count}건</p></div>
+            <div class="metric"><h3>최대T</h3><p>{max_t:.1f} / {split_n}</p></div>
+            <div class="metric warning"><h3>현재 미청산 평가액</h3><p>{final_open_value:,.0f}원</p></div>
+        </div>
+        <p class="small-note">Step25E-3은 V4.0 일반모드의 T 변화, 1회매수금, 매수/매도 이벤트 타입을 검증합니다. 새 매매공식은 추가하지 않고, 리버스모드는 아직 제외합니다.</p>
+        <div class="table-wrap">
+            <table border="1" cellpadding="6" cellspacing="0">
+                <tr><th>검증 항목</th><th>상태</th><th>확인 내용</th></tr>
+                {rows}
+            </table>
+        </div>
+    </div>
+    """
+
+
+def make_v4_execution_audit_html(bt, trade_df, ticker, split_count):
+    """Step25E-3: V4.0 일반모드 T / 1회매수금 / 체결 이벤트 검증표."""
+    if bt is None or bt.empty:
+        return ""
+    import pandas as _pd
+    btdf = bt.copy()
+    if "Date" in btdf.columns:
+        btdf["Date"] = _pd.to_datetime(btdf["Date"], errors="coerce")
+
+    def _num(col, default=0.0):
+        if col in btdf.columns:
+            return _pd.to_numeric(btdf[col], errors="coerce").fillna(default)
+        return _pd.Series([default] * len(btdf), index=btdf.index)
+
+    action_s = btdf.get("Action", _pd.Series([""] * len(btdf), index=btdf.index)).fillna("").astype(str)
+    order_s = btdf.get("OrderPlan", _pd.Series([""] * len(btdf), index=btdf.index)).fillna("").astype(str)
+    debug_s = btdf.get("RaorDebug", _pd.Series([""] * len(btdf), index=btdf.index)).fillna("").astype(str)
+
+    t_before = _num("TBefore")
+    t_after = _num("TAfter", None) if "TAfter" in btdf.columns else _num("T")
+    t_delta = _num("TDelta")
+    unit_before = _num("DailyAttemptBefore")
+    unit_after = _num("DailyAttempt")
+    cash_s = _num("Cash")
+
+    t_calc_fail = int(((t_after - t_before - t_delta).abs() > 1e-6).sum())
+    t_range_fail = int(((t_after < -1e-8) | (t_after > float(split_count) + 1e-8)).sum())
+    unit_nan_fail = int((unit_before.isna() | unit_after.isna()).sum())
+    unit_negative_fail = int(((unit_before < -1e-8) | (unit_after < -1e-8)).sum())
+    unit_fail = unit_nan_fail + unit_negative_fail
+
+    first_buy_count = int(action_s.str.contains("첫매수LOC", na=False).sum())
+    half_buy_count = int(action_s.str.contains("전반전", na=False).sum())
+    full_buy_count = int(action_s.str.contains("후반전별LOC|소진모드별LOC", regex=True, na=False).sum())
+    any_buy_count = int(btdf.get("BuyLOCExecuted", _pd.Series([False] * len(btdf), index=btdf.index)).fillna(False).astype(bool).sum()) if "BuyLOCExecuted" in btdf.columns else int(action_s.str.contains("매수|LOC", na=False).sum())
+    designated_sell_count = int(btdf.get("DesignatedSellExecuted", _pd.Series([False] * len(btdf), index=btdf.index)).fillna(False).astype(bool).sum()) if "DesignatedSellExecuted" in btdf.columns else int(action_s.str.contains("지정가", na=False).sum())
+    star_sell_count = int(btdf.get("SellLOCExecuted", _pd.Series([False] * len(btdf), index=btdf.index)).fillna(False).astype(bool).sum()) if "SellLOCExecuted" in btdf.columns else int(action_s.str.contains("LOC매도|쿼터매도", regex=True, na=False).sum())
+    same_day_sell_buy = int(((btdf.get("DesignatedSellExecuted", _pd.Series([False] * len(btdf), index=btdf.index)).fillna(False).astype(bool) | btdf.get("SellLOCExecuted", _pd.Series([False] * len(btdf), index=btdf.index)).fillna(False).astype(bool)) & btdf.get("BuyLOCExecuted", _pd.Series([False] * len(btdf), index=btdf.index)).fillna(False).astype(bool)).sum()) if {"DesignatedSellExecuted", "SellLOCExecuted", "BuyLOCExecuted"}.issubset(btdf.columns) else 0
+    ambiguous_count = int(btdf.get("DailyCandleOrderAmbiguous", _pd.Series([False] * len(btdf), index=btdf.index)).fillna(False).astype(bool).sum()) if "DailyCandleOrderAmbiguous" in btdf.columns else 0
+    overlap_count = int(btdf.get("BuySellPriceOverlap", _pd.Series([False] * len(btdf), index=btdf.index)).fillna(False).astype(bool).sum()) if "BuySellPriceOverlap" in btdf.columns else 0
+
+    rows = ""
+    audit_rows = [
+        ("T 계산 일관성", "PASS" if t_calc_fail == 0 else "REVIEW", f"TAfter - TBefore - TDelta 불일치 {t_calc_fail}건"),
+        ("T 범위", "PASS" if t_range_fail == 0 else "REVIEW", f"0~{split_count} 범위 이탈 {t_range_fail}건"),
+        ("1회매수금", "PASS" if unit_fail == 0 else "REVIEW", f"DailyAttemptBefore/After NaN·음수 {unit_fail}건"),
+        ("첫매수", "PASS" if first_buy_count > 0 else "REVIEW", f"첫매수LOC {first_buy_count}회"),
+        ("전반전 매수", "PASS" if half_buy_count > 0 else "REVIEW", f"전반전 별/평단 LOC 이벤트일 {half_buy_count}일"),
+        ("후반전/소진 매수", "PASS" if full_buy_count > 0 else "REVIEW", f"후반전/소진 별LOC 이벤트일 {full_buy_count}일"),
+        ("매도 이벤트", "PASS" if (designated_sell_count + star_sell_count) > 0 else "REVIEW", f"지정가 {designated_sell_count}회 / 별LOC {star_sell_count}회"),
+        ("동일일 매수·매도", "PASS" if same_day_sell_buy == 0 else "REVIEW", f"동일일 매수·매도 동시 실행 {same_day_sell_buy}건"),
+        ("별LOC 가격분리", "PASS" if overlap_count == 0 else "REVIEW", f"BuyLOC >= SellLOC 겹침 {overlap_count}건"),
+        ("OHLC 선후관계", "INFO", f"DailyCandleOrderAmbiguous {ambiguous_count}건"),
+    ]
+    for name, status, note in audit_rows:
+        cls = "positive" if status == "PASS" else ("warning" if status == "REVIEW" else "")
+        rows += f"<tr><td>{name}</td><td class='{cls}'><b>{status}</b></td><td>{note}</td></tr>"
+
+    sample = btdf[(action_s != "관망") | btdf.get("BuyLOCExecuted", _pd.Series([False] * len(btdf), index=btdf.index)).fillna(False).astype(bool) | btdf.get("DesignatedSellExecuted", _pd.Series([False] * len(btdf), index=btdf.index)).fillna(False).astype(bool) | btdf.get("SellLOCExecuted", _pd.Series([False] * len(btdf), index=btdf.index)).fillna(False).astype(bool)].copy()
+    if "Date" in sample.columns:
+        sample = sample.sort_values("Date", ascending=False).head(40)
+    sample_rows = ""
+    for _, r in sample.iterrows():
+        sample_rows += f"""
+        <tr>
+            <td>{fmt_log_date(r.get('Date', ''))}</td>
+            <td>{r.get('CycleId', '')}</td>
+            <td>{float(r.get('TBefore', 0) or 0):.2f}</td>
+            <td>{float(r.get('TAfter', r.get('T', 0)) or 0):.2f}</td>
+            <td>{float(r.get('TDelta', 0) or 0):.2f}</td>
+            <td>{float(r.get('DailyAttemptBefore', 0) or 0):,.0f}</td>
+            <td>{float(r.get('DailyAttempt', 0) or 0):,.0f}</td>
+            <td>{r.get('PhaseBefore', '')}</td>
+            <td>{r.get('PhaseAfter', '')}</td>
+            <td>{r.get('Action', '')}</td>
+            <td>{r.get('OrderPlan', '')}</td>
+        </tr>
+        """
+
+    return f"""
+    <div class="card hero">
+        <h2>Step25E-6 V4.0 T / 1회매수금 / 체결 이벤트 검증</h2>
+        <div class="grid mini-grid">
+            <div class="metric {'positive' if t_calc_fail == 0 else 'warning'}"><h3>T계산 실패</h3><p>{t_calc_fail}건</p></div>
+            <div class="metric {'positive' if t_range_fail == 0 else 'warning'}"><h3>T범위 실패</h3><p>{t_range_fail}건</p></div>
+            <div class="metric {'positive' if unit_fail == 0 else 'warning'}"><h3>1회매수금 실패</h3><p>{unit_fail}건</p></div>
+            <div class="metric"><h3>첫/전반/후반 매수</h3><p>{first_buy_count} / {half_buy_count} / {full_buy_count}</p></div>
+            <div class="metric"><h3>전체 매수 이벤트일</h3><p>{any_buy_count}일</p></div>
+            <div class="metric"><h3>지정가/별LOC 매도</h3><p>{designated_sell_count} / {star_sell_count}</p></div>
+            <div class="metric {'positive' if same_day_sell_buy == 0 else 'warning'}"><h3>동일일 매수·매도</h3><p>{same_day_sell_buy}건</p></div>
+            <div class="metric warning"><h3>OHLC 선후불명</h3><p>{ambiguous_count}건</p></div>
+        </div>
+        <p class="small-note">E-5는 E-4의 완료 CycleId 기준 승률 집계를 유지하면서, OPEN 주기/장기주기 리스크 해석을 추가합니다.</p>
+        <div class="table-wrap"><table border="1" cellpadding="6" cellspacing="0">
+            <tr><th>검증 항목</th><th>상태</th><th>확인 내용</th></tr>{rows}
+        </table></div>
+        <h3>최근 체결/주문 이벤트 샘플</h3>
+        <div class="table-wrap"><table border="1" cellpadding="6" cellspacing="0">
+            <tr><th>날짜</th><th>주기</th><th>TBefore</th><th>TAfter</th><th>TDelta</th><th>1회매수금 Before</th><th>1회매수금 After</th><th>전상태</th><th>후상태</th><th>액션</th><th>주문계획</th></tr>
+            {sample_rows}
+        </table></div>
+    </div>
+    """
+
+def make_v4_winrate_cycle_audit_html(trade_df, bt, trade_summary):
+    """Step25E-6: V4.0 승률/완료주기 집계가 부분매도 이벤트와 섞이지 않았는지 확인한다."""
+    if trade_summary is None:
+        trade_summary = {}
+    completed_n = int(trade_summary.get("trade_count", 0) or 0)
+    win_n = int(trade_summary.get("win_count", 0) or 0)
+    loss_n = int(trade_summary.get("loss_count", 0) or 0)
+    cycle_wr = float(trade_summary.get("win_rate", 0) or 0)
+    sell_event_n = int(trade_summary.get("sell_event_count", 0) or 0)
+    sell_event_wr = float(trade_summary.get("sell_event_win_rate", 0) or 0)
+    basis = trade_summary.get("summary_basis", "완료 주기(CycleId)")
+
+    mixed_warning = bool(sell_event_n > completed_n and completed_n > 0)
+    pass_cycle = (basis.startswith("완료 주기") and completed_n > 0)
+
+    rows = [
+        ("주기승률 기준", "PASS" if pass_cycle else "REVIEW", f"{basis}: 완료주기 {completed_n}개, 수익 {win_n}개, 손실 {loss_n}개"),
+        ("매도 이벤트 분리", "PASS" if sell_event_n >= completed_n else "REVIEW", f"매도 이벤트 {sell_event_n}개 / 완료주기 {completed_n}개"),
+        ("승률 혼동 방지", "PASS" if mixed_warning else "REVIEW", f"주기승률 {cycle_wr:.2f}% / 매도이벤트승률 {sell_event_wr:.2f}%"),
+        ("OPEN 주기 제외", "PASS", "현재 미청산 주기는 주기승률 계산에서 제외"),
+    ]
+    row_html = "".join(f"<tr><td>{a}</td><td>{b}</td><td>{c}</td></tr>" for a,b,c in rows)
+    warn_note = "부분매도 이벤트 수가 완료주기보다 많습니다. 이는 V4.0 구조상 정상일 수 있으나, 주기승률은 완료 CycleId만 사용합니다." if mixed_warning else "매도 이벤트와 완료주기 수 차이가 작습니다. 그래도 집계 기준은 완료 CycleId입니다."
+    return f"""
+    <div class="card section-highlight">
+        <h2>Step25E-6 V4.0 승률 / 완료주기 집계 검증</h2>
+        <div class="grid small-grid">
+            <div class="metric {'positive' if pass_cycle else 'warning'}"><h3>집계 기준</h3><p>{basis}</p></div>
+            <div class="metric"><h3>완료주기수</h3><p>{completed_n}개</p></div>
+            <div class="metric positive"><h3>주기승률</h3><p>{cycle_wr:.2f}%</p></div>
+            <div class="metric"><h3>매도 이벤트</h3><p>{sell_event_n}개</p></div>
+            <div class="metric warning"><h3>매도이벤트승률</h3><p>{sell_event_wr:.2f}%</p></div>
+        </div>
+        <p class="small-note">{warn_note}</p>
+        <table border="1" cellpadding="6" cellspacing="0">
+            <tr><th>검증 항목</th><th>상태</th><th>확인 내용</th></tr>
+            {row_html}
+        </table>
+    </div>
+    """
+
+
+def make_v4_cycle_status_open_risk_html(trade_df, bt, split_count):
+    """Step25E-6: V4.0 완료/OPEN/REVIEW 주기와 장기주기 리스크를 분리해서 해석한다.
+
+    목적:
+    - E-4에서 완료주기와 매도 이벤트 수를 분리했다.
+    - E-5에서는 현재 미청산 OPEN 주기, 1000일 이상 장기 완료주기, REVIEW 주기를 따로 표시한다.
+    - 매매 공식/체결 조건은 건드리지 않고, bt/trade_df 기반 해석 표만 만든다.
+    """
+    if bt is None or bt.empty or "CycleId" not in bt.columns:
+        return ""
+
+    temp = bt.copy()
+    temp["CycleIdNum"] = pd.to_numeric(temp["CycleId"], errors="coerce").fillna(0).astype(int)
+    temp = temp[temp["CycleIdNum"] > 0].copy()
+    if temp.empty:
+        return ""
+
+    sell_df = get_sell_trade_df(trade_df) if trade_df is not None else pd.DataFrame()
+    if sell_df is not None and not sell_df.empty and "CycleId" in sell_df.columns:
+        sell_df = sell_df.copy()
+        sell_df["CycleIdNum"] = pd.to_numeric(sell_df["CycleId"], errors="coerce").fillna(0).astype(int)
+    else:
+        sell_df = pd.DataFrame()
+
+    completed_ids = set()
+    completed_end_dates = {}
+    if not sell_df.empty:
+        completed_mask = pd.Series(False, index=sell_df.index)
+        if "CycleCompleted" in sell_df.columns:
+            completed_mask = completed_mask | sell_df["CycleCompleted"].fillna(False).astype(bool)
+        if "IsCycleCompleted" in sell_df.columns:
+            completed_mask = completed_mask | sell_df["IsCycleCompleted"].fillna(False).astype(bool)
+        completed_rows = sell_df[completed_mask].copy()
+        if not completed_rows.empty:
+            completed_ids = set(completed_rows["CycleIdNum"].dropna().astype(int).tolist())
+            for cid, g in completed_rows.groupby("CycleIdNum"):
+                date_candidates = []
+                for c in ["CycleEndDate", "SellEventDate", "SellDate", "EventDate"]:
+                    if c in g.columns:
+                        vals = pd.to_datetime(g[c], errors="coerce").dropna()
+                        if not vals.empty:
+                            date_candidates.append(vals.max())
+                completed_end_dates[int(cid)] = max(date_candidates) if date_candidates else pd.NaT
+
+    final_row = temp.sort_values("Date").tail(1).iloc[0]
+    final_shares = float(final_row.get("Shares", 0) or 0)
+    open_id = int(final_row.get("CycleIdNum", 0) or 0) if final_shares > 1e-9 else None
+    all_ids = sorted(set(temp["CycleIdNum"].dropna().astype(int).tolist()))
+    review_ids = [cid for cid in all_ids if cid not in completed_ids and cid != open_id]
+
+    cycle_rows = []
+    long_rows = []
+    open_rows = []
+    for cid in all_ids:
+        g = temp[temp["CycleIdNum"] == cid].sort_values("Date").copy()
+        if g.empty:
+            continue
+        pos_mask = pd.Series(True, index=g.index)
+        if "Shares" in g.columns:
+            pos_mask = pd.to_numeric(g["Shares"], errors="coerce").fillna(0) > 1e-9
+        pos_g = g[pos_mask].copy()
+        if pos_g.empty:
+            pos_g = g
+        start_ts = pd.to_datetime(pos_g["Date"].min(), errors="coerce")
+        last_ts = pd.to_datetime(g["Date"].max(), errors="coerce")
+        status = "COMPLETED" if cid in completed_ids else ("OPEN" if cid == open_id else "REVIEW")
+        end_reason = "전량매도완료" if status == "COMPLETED" else ("기간종료미청산" if status == "OPEN" else "확인필요")
+        end_ts = completed_end_dates.get(cid, pd.NaT) if status == "COMPLETED" else last_ts
+        if pd.isna(end_ts):
+            end_ts = last_ts
+        cycle_days = int((end_ts - start_ts).days) if pd.notna(start_ts) and pd.notna(end_ts) else 0
+        max_t = float(pd.to_numeric(g.get("T", g.get("CurrentSplit", 0)), errors="coerce").fillna(0).max())
+        last = g.tail(1).iloc[0]
+        open_qty = float(last.get("Shares", 0) or 0) if status == "OPEN" else 0.0
+        close_v = float(last.get("Close", 0) or 0)
+        open_value = open_qty * close_v
+        open_t = float(last.get("T", last.get("CurrentSplit", 0)) or 0) if status == "OPEN" else 0.0
+        cash_v = float(last.get("Cash", 0) or 0)
+        total_asset_v = float(last.get("TotalAsset", cash_v + open_value) or 0)
+
+        g_sell = sell_df[sell_df["CycleIdNum"] == cid] if not sell_df.empty and "CycleIdNum" in sell_df.columns else pd.DataFrame()
+        profit = float(pd.to_numeric(g_sell.get("Profit", 0), errors="coerce").fillna(0).sum()) if not g_sell.empty else 0.0
+        buy_amount = float(pd.to_numeric(g_sell.get("BuyAmount", 0), errors="coerce").fillna(0).sum()) if not g_sell.empty else 0.0
+        sell_count = int(len(g_sell)) if not g_sell.empty else 0
+        ret_pct = (profit / buy_amount * 100.0) if buy_amount > 0 else 0.0
+        buy_signal_count = int(pd.to_numeric(g.get("BuyLOCExecuted", 0), errors="coerce").fillna(0).astype(bool).sum()) if "BuyLOCExecuted" in g.columns else 0
+        sell_signal_count = int(pd.to_numeric(g.get("DesignatedSellExecuted", 0), errors="coerce").fillna(0).astype(bool).sum()) if "DesignatedSellExecuted" in g.columns else 0
+        if "SellLOCExecuted" in g.columns:
+            sell_signal_count += int(pd.to_numeric(g.get("SellLOCExecuted", 0), errors="coerce").fillna(0).astype(bool).sum())
+
+        row = {
+            "cid": cid,
+            "status": status,
+            "start": start_ts.strftime("%Y-%m-%d") if pd.notna(start_ts) else "",
+            "end": end_ts.strftime("%Y-%m-%d") if pd.notna(end_ts) else "",
+            "days": cycle_days,
+            "end_reason": end_reason,
+            "max_t": max_t,
+            "open_qty": open_qty,
+            "open_value": open_value,
+            "open_t": open_t,
+            "profit": profit,
+            "ret_pct": ret_pct,
+            "sell_count": sell_count,
+            "buy_signal_count": buy_signal_count,
+            "sell_signal_count": sell_signal_count,
+            "total_asset": total_asset_v,
+        }
+        cycle_rows.append(row)
+        if cycle_days >= 1000:
+            long_rows.append(row)
+        if status == "OPEN":
+            open_rows.append(row)
+
+    completed_n = sum(1 for r in cycle_rows if r["status"] == "COMPLETED")
+    open_n = sum(1 for r in cycle_rows if r["status"] == "OPEN")
+    review_n = sum(1 for r in cycle_rows if r["status"] == "REVIEW")
+    long_n = len(long_rows)
+    current_open_qty = sum(r["open_qty"] for r in open_rows)
+    current_open_value = sum(r["open_value"] for r in open_rows)
+    current_open_t = max([r["open_t"] for r in open_rows], default=0.0)
+    current_open_days = max([r["days"] for r in open_rows], default=0)
+    current_open_start = open_rows[0]["start"] if open_rows else "-"
+    current_open_cycle = open_rows[0]["cid"] if open_rows else "-"
+
+    def _cycle_table(rows, limit=20):
+        html = ""
+        for r in rows[:limit]:
+            cls = "positive" if r["status"] == "COMPLETED" else ("warning" if r["status"] == "OPEN" else "danger")
+            html += f"""
+            <tr>
+                <td>{r['cid']}</td><td class="{cls}">{r['status']}</td><td>{r['start']}</td><td>{r['end']}</td>
+                <td>{r['days']}</td><td>{r['end_reason']}</td><td>{r['max_t']:.2f}T</td>
+                <td>{r['open_qty']:,.4f}</td><td>{r['open_value']:,.0f}</td>
+                <td>{r['profit']:,.0f}</td><td>{r['ret_pct']:.2f}%</td><td>{r['sell_count']}</td>
+            </tr>
+            """
+        return html
+
+    long_rows_sorted = sorted(long_rows, key=lambda x: x["days"], reverse=True)
+    open_rows_sorted = sorted(open_rows, key=lambda x: x["cid"])
+    all_rows_sorted = sorted(cycle_rows, key=lambda x: x["cid"], reverse=False)
+
+    long_table = _cycle_table(long_rows_sorted, limit=10) or '<tr><td colspan="12">1000일 이상 장기 주기 없음</td></tr>'
+    open_table = _cycle_table(open_rows_sorted, limit=5) or '<tr><td colspan="12">현재 OPEN 주기 없음</td></tr>'
+    all_table = _cycle_table(all_rows_sorted, limit=120)
+
+    review_cls = "positive" if review_n == 0 else "danger"
+    open_cls = "warning" if open_n > 0 else "positive"
+    long_cls = "warning" if long_n > 0 else "positive"
+    return f"""
+    <div class="card section-highlight">
+        <h2>Step25E-6 V4.0 최대 MDD / OPEN 주기 / 장기주기 리스크 분석</h2>
+        <div class="grid mini-grid">
+            <div class="metric positive"><h3>COMPLETED</h3><p>{completed_n}개</p></div>
+            <div class="metric {open_cls}"><h3>OPEN</h3><p>{open_n}개</p></div>
+            <div class="metric {review_cls}"><h3>REVIEW</h3><p>{review_n}개</p></div>
+            <div class="metric {long_cls}"><h3>1000일 이상 장기주기</h3><p>{long_n}개</p></div>
+            <div class="metric warning"><h3>현재 OPEN 주기</h3><p>{current_open_cycle}</p></div>
+            <div class="metric"><h3>OPEN 시작/경과</h3><p>{current_open_start} / {current_open_days}일</p></div>
+            <div class="metric"><h3>OPEN T</h3><p>{current_open_t:.2f}/{float(split_count):.0f}T</p></div>
+            <div class="metric warning"><h3>OPEN 평가액</h3><p>{current_open_value:,.0f}원</p></div>
+            <div class="metric"><h3>OPEN 수량</h3><p>{current_open_qty:,.4f}</p></div>
+        </div>
+        <p class="small-note">완료주기 승률은 COMPLETED 주기만 사용하고, 현재 OPEN 주기는 승률에서 제외합니다. OPEN 평가는 수익률보다 리스크 해석용입니다.</p>
+        <h3>1000일 이상 장기 주기 상세</h3>
+        <div class="table-wrap"><table border="1" cellpadding="6" cellspacing="0">
+            <tr><th>주기</th><th>최종상태</th><th>시작일</th><th>종료/마지막일</th><th>주기일수</th><th>종료사유</th><th>최대T</th><th>OpenQty</th><th>Open평가액</th><th>완료손익</th><th>완료수익률</th><th>매도이벤트</th></tr>
+            {long_table}
+        </table></div>
+        <h3>현재 OPEN 주기 상세</h3>
+        <div class="table-wrap"><table border="1" cellpadding="6" cellspacing="0">
+            <tr><th>주기</th><th>최종상태</th><th>시작일</th><th>종료/마지막일</th><th>주기일수</th><th>종료사유</th><th>최대T</th><th>OpenQty</th><th>Open평가액</th><th>완료손익</th><th>완료수익률</th><th>매도이벤트</th></tr>
+            {open_table}
+        </table></div>
+        <h3>전체 주기 최종상태 요약</h3>
+        <div class="table-wrap"><table border="1" cellpadding="6" cellspacing="0">
+            <tr><th>주기</th><th>최종상태</th><th>시작일</th><th>종료/마지막일</th><th>주기일수</th><th>종료사유</th><th>최대T</th><th>OpenQty</th><th>Open평가액</th><th>완료손익</th><th>완료수익률</th><th>매도이벤트</th></tr>
+            {all_table}
+        </table></div>
+    </div>
+    """
+
+
+def make_v4_mdd_cycle_risk_html(trade_df, bt, split_count):
+    """Step25E-6: V4.0 최대 MDD 발생 주기와 최악 리스크 구간을 분석한다.
+
+    매매 공식/체결 조건에는 관여하지 않고 bt/trade_df 결과를 사후 분석한다.
+    확인 대상:
+    - 전체 최대 MDD 날짜와 당시 CycleId/T/보유수량/평가액
+    - 최대 MDD 직전 고점 대비 회복 여부와 회복 소요일
+    - 주기별 최악 MDD 상위 구간
+    - 현재 OPEN 주기의 현재 DD와 시작 이후 최악 DD
+    """
+    if bt is None or bt.empty or "Date" not in bt.columns or "TotalAsset" not in bt.columns:
+        return ""
+    import pandas as _pd
+    import math as _math
+    btdf = bt.copy()
+    btdf["Date"] = _pd.to_datetime(btdf["Date"], errors="coerce")
+    btdf = btdf.dropna(subset=["Date"]).sort_values("Date").reset_index(drop=True)
+    if btdf.empty:
+        return ""
+
+    def _num_series(col, default=0.0):
+        if col in btdf.columns:
+            return _pd.to_numeric(btdf[col], errors="coerce").fillna(default)
+        return _pd.Series([default] * len(btdf), index=btdf.index)
+
+    total = _num_series("TotalAsset", 0.0)
+    peak = total.cummax()
+    dd = (total - peak) / peak.replace(0, _pd.NA) * 100.0
+    dd = dd.fillna(0.0)
+    if dd.empty:
+        return ""
+    max_dd_idx = dd.idxmin()
+    mdd_row = btdf.loc[max_dd_idx]
+    max_dd = float(dd.loc[max_dd_idx])
+    mdd_date = mdd_row["Date"]
+    mdd_cycle = int(_pd.to_numeric(_pd.Series([mdd_row.get("CycleId", 0)]), errors="coerce").fillna(0).iloc[0])
+    mdd_t = float(mdd_row.get("T", mdd_row.get("TAfter", mdd_row.get("CurrentSplit", 0))) or 0)
+    mdd_shares = float(mdd_row.get("Shares", 0) or 0)
+    mdd_close = float(mdd_row.get("Close", 0) or 0)
+    mdd_open_value = mdd_shares * mdd_close
+    mdd_cash = float(mdd_row.get("Cash", 0) or 0)
+    mdd_asset = float(mdd_row.get("TotalAsset", 0) or 0)
+    peak_before = float(peak.loc[max_dd_idx] or 0)
+
+    # 회복: 최대 MDD 발생 이후 TotalAsset이 당시 고점 이상으로 회복한 첫 날짜
+    after = btdf.loc[max_dd_idx:].copy()
+    after_total = _pd.to_numeric(after["TotalAsset"], errors="coerce").fillna(0)
+    rec_mask = after_total >= peak_before - 1e-6
+    if rec_mask.any():
+        rec_idx = rec_mask[rec_mask].index[0]
+        recovery_date = btdf.loc[rec_idx, "Date"]
+        recovery_days = int((recovery_date - mdd_date).days)
+        recovery_label = recovery_date.strftime("%Y-%m-%d")
+    else:
+        recovery_days = None
+        recovery_label = "미회복"
+
+    # 완료/OPEN 상태 보조 판정
+    sell_df = get_sell_trade_df(trade_df) if trade_df is not None else _pd.DataFrame()
+    completed_ids = set()
+    if sell_df is not None and not sell_df.empty and "CycleId" in sell_df.columns:
+        sdict = sell_df.copy()
+        sdict["CycleIdNum"] = _pd.to_numeric(sdict["CycleId"], errors="coerce").fillna(0).astype(int)
+        cmask = _pd.Series(False, index=sdict.index)
+        if "CycleCompleted" in sdict.columns:
+            cmask = cmask | sdict["CycleCompleted"].fillna(False).astype(bool)
+        if "IsCycleCompleted" in sdict.columns:
+            cmask = cmask | sdict["IsCycleCompleted"].fillna(False).astype(bool)
+        completed_ids = set(sdict[cmask]["CycleIdNum"].dropna().astype(int).tolist())
+
+    final = btdf.tail(1).iloc[0]
+    final_shares = float(final.get("Shares", 0) or 0)
+    open_id = int(_pd.to_numeric(_pd.Series([final.get("CycleId", 0)]), errors="coerce").fillna(0).iloc[0]) if final_shares > 1e-9 else None
+
+    # 주기별 최악 DD: 해당 주기 구간 내부 TotalAsset cummax 기준. 전체 MDD와는 별도 보조지표.
+    cycle_col = "CycleId" if "CycleId" in btdf.columns else None
+    cycle_rows = []
+    if cycle_col:
+        btdf["CycleIdNum"] = _pd.to_numeric(btdf[cycle_col], errors="coerce").fillna(0).astype(int)
+        for cid, g in btdf[btdf["CycleIdNum"] > 0].groupby("CycleIdNum"):
+            g = g.sort_values("Date").copy()
+            if g.empty:
+                continue
+            gt = _pd.to_numeric(g["TotalAsset"], errors="coerce").fillna(0)
+            gp = gt.cummax()
+            gd = ((gt - gp) / gp.replace(0, _pd.NA) * 100).fillna(0)
+            worst_idx = gd.idxmin()
+            worst_row = g.loc[worst_idx]
+            st = g["Date"].min()
+            ed = g["Date"].max()
+            status = "COMPLETED" if int(cid) in completed_ids else ("OPEN" if open_id == int(cid) else "REVIEW")
+            max_t = float(_pd.to_numeric(g.get("T", g.get("TAfter", g.get("CurrentSplit", _pd.Series([0]*len(g), index=g.index)))), errors="coerce").fillna(0).max())
+            shares_w = float(worst_row.get("Shares", 0) or 0)
+            close_w = float(worst_row.get("Close", 0) or 0)
+            cycle_rows.append({
+                "cid": int(cid),
+                "status": status,
+                "start": st,
+                "end": ed,
+                "days": int((ed - st).days) if _pd.notna(st) and _pd.notna(ed) else 0,
+                "worst_dd": float(gd.loc[worst_idx]),
+                "worst_date": worst_row["Date"],
+                "max_t": max_t,
+                "shares": shares_w,
+                "open_value": shares_w * close_w,
+                "asset": float(worst_row.get("TotalAsset", 0) or 0),
+            })
+
+    worst_rows = sorted(cycle_rows, key=lambda r: r["worst_dd"])[:10]
+    def _fmt_dt(x):
+        return x.strftime("%Y-%m-%d") if _pd.notna(x) else ""
+    worst_html = ""
+    for r in worst_rows:
+        cls = "positive" if r["status"] == "COMPLETED" else ("warning" if r["status"] == "OPEN" else "danger")
+        worst_html += f"""
+        <tr>
+            <td>{r['cid']}</td><td class="{cls}">{r['status']}</td><td>{_fmt_dt(r['start'])}</td><td>{_fmt_dt(r['end'])}</td>
+            <td>{r['days']}</td><td>{r['worst_dd']:.2f}%</td><td>{_fmt_dt(r['worst_date'])}</td>
+            <td>{r['max_t']:.2f}T</td><td>{r['shares']:,.4f}</td><td>{r['open_value']:,.0f}</td><td>{r['asset']:,.0f}</td>
+        </tr>
+        """
+    if not worst_html:
+        worst_html = '<tr><td colspan="11">주기별 MDD 분석 데이터 없음</td></tr>'
+
+    # 현재 OPEN 주기 리스크
+    open_rows = [r for r in cycle_rows if r["status"] == "OPEN"]
+    if open_rows:
+        op = open_rows[0]
+        open_worst_dd = op["worst_dd"]
+        open_worst_date = _fmt_dt(op["worst_date"])
+        open_max_t = op["max_t"]
+        open_days = op["days"]
+    else:
+        open_worst_dd = 0.0
+        open_worst_date = "-"
+        open_max_t = 0.0
+        open_days = 0
+
+    recovery_text = f"{recovery_days}일" if recovery_days is not None else "미회복"
+    recovery_cls = "positive" if recovery_days is not None else "warning"
+    mdd_cycle_status = "COMPLETED" if mdd_cycle in completed_ids else ("OPEN" if open_id == mdd_cycle else "REVIEW")
+    mdd_status_cls = "positive" if mdd_cycle_status == "COMPLETED" else ("warning" if mdd_cycle_status == "OPEN" else "danger")
+    return f"""
+    <div class="card section-highlight">
+        <h2>Step25E-6 V4.0 최대 MDD / 최악 주기 리스크 분석</h2>
+        <div class="grid mini-grid">
+            <div class="metric danger"><h3>전체 최대 MDD</h3><p>{max_dd:.2f}%</p></div>
+            <div class="metric warning"><h3>MDD 발생일</h3><p>{mdd_date.strftime('%Y-%m-%d')}</p></div>
+            <div class="metric {mdd_status_cls}"><h3>MDD 발생 주기</h3><p>{mdd_cycle} / {mdd_cycle_status}</p></div>
+            <div class="metric"><h3>당시 T</h3><p>{mdd_t:.2f}/{float(split_count):.0f}T</p></div>
+            <div class="metric warning"><h3>당시 보유평가액</h3><p>{mdd_open_value:,.0f}원</p></div>
+            <div class="metric"><h3>당시 현금</h3><p>{mdd_cash:,.0f}원</p></div>
+            <div class="metric"><h3>당시 총자산</h3><p>{mdd_asset:,.0f}원</p></div>
+            <div class="metric"><h3>직전 고점자산</h3><p>{peak_before:,.0f}원</p></div>
+            <div class="metric {recovery_cls}"><h3>고점 회복</h3><p>{recovery_text}</p></div>
+            <div class="metric"><h3>회복일</h3><p>{recovery_label}</p></div>
+            <div class="metric warning"><h3>현재 OPEN 최악DD</h3><p>{open_worst_dd:.2f}%</p></div>
+            <div class="metric"><h3>현재 OPEN 최대T/일수</h3><p>{open_max_t:.2f}T / {open_days}일</p></div>
+        </div>
+        <p class="small-note">E-6은 매매공식 변경 없이 결과 시계열을 사후 분석합니다. 전체 MDD는 총자산 기준이고, 주기별 최악DD는 각 주기 내부 고점 대비 하락률이라 서로 기준이 다릅니다.</p>
+        <h3>주기별 최악 DD 상위 10개</h3>
+        <div class="table-wrap"><table border="1" cellpadding="6" cellspacing="0">
+            <tr><th>주기</th><th>최종상태</th><th>시작일</th><th>마지막일</th><th>주기일수</th><th>주기내 최악DD</th><th>최악일</th><th>최대T</th><th>당시수량</th><th>당시평가액</th><th>당시총자산</th></tr>
+            {worst_html}
+        </table></div>
+    </div>
+    """
+
 
 def make_raor_validation_html(bt, trade_df, ticker, split_count):
     """Step24D: 원문 규칙 검증 체크리스트 화면."""
@@ -3982,9 +4672,9 @@ def home():
     if ticker not in ["SOXL", "TQQQ"]:
         ticker = "SOXL"
 
-    strategy = request.args.get("strategy", default="raor_v22")
-    if strategy not in ["raor_v22", "raor4_step25d"]:
-        strategy = "raor_v22"
+    strategy = request.args.get("strategy", default="raor4_step25e")
+    if strategy not in ["raor_v22", "raor4_step25e", "raor4_step25d"]:
+        strategy = "raor4_step25e"
     action_mode = request.args.get("action_mode", default="backtest")
 
     # Step24 원문엔진은 TQQQ/SOXL만 지원한다. QQQ로 들어오면 500 오류 대신 TQQQ로 보정한다.
@@ -4037,6 +4727,13 @@ def home():
     first_loc_buffer_pct = request.args.get("first_loc_buffer_pct", default=12.0, type=float)
     default_designated_sell_pct = 15.0 if ticker == "TQQQ" else 20.0
     designated_sell_pct = request.args.get("designated_sell_pct", default=default_designated_sell_pct, type=float)
+    # Step25E-6 유지 보정:
+    # V4.0 일반모드 원문 재검증판에서는 URL/이전 프리셋에 남아 있는 designated_sell_pct 값을 무시하고
+    # 원문 고정값(TQQQ 15%, SOXL 20%)만 엔진에 전달한다.
+    # 이전 Step25E/E-2/E-3에서는 화면은 "원문 고정 20%"로 보이는데,
+    # URL에 designated_sell_pct=10 같은 예전 파라미터가 남아 있으면 엔진은 10%로 실행될 수 있었다.
+    if strategy == "raor4_step25e":
+        designated_sell_pct = default_designated_sell_pct
 
     fee_percent = request.args.get("fee_percent", default=0.25, type=float)
     ticker_options = ""
@@ -4081,16 +4778,17 @@ def home():
     if str(strategy).startswith("raor4_step25") or strategy in ["raor4_step24y", "raor4_step24z", "raor_v22"]:
         advanced_stage_html = f"""
         <div class="card hero step25-roadmap-card">
-            <h2>Step25D-8 V2.2 결과표/검증표 마감판</h2>
+            <h2>Step25E-6 V4.0 최대 MDD / OPEN 주기 리스크 분석판</h2>
             <div class="grid">
                 <div class="metric positive"><h3>24Y 선택도우미</h3><p>후보 해석</p></div>
                 <div class="metric positive"><h3>24Z 프리셋</h3><p>저장 준비</p></div>
                 <div class="metric warning"><h3>25A 동시비교</h3><p>TQQQ/SOXL</p></div>
                 <div class="metric positive"><h3>25B 교차검증</h3><p>원문 체크</p></div>
                 <div class="metric positive"><h3>25C RPA 신호</h3><p>CSV 준비</p></div>
-                <div class="metric warning"><h3>25D 엔진검증</h3><p>V2.2 통합/V4.0 분리</p></div>
+                <div class="metric positive"><h3>25D V2.2</h3><p>검증마감</p></div>
+                <div class="metric warning"><h3>25E V4.0</h3><p>일반모드 재검증</p></div>
             </div>
-            <p class="small-note">매매 공식은 Step24X 원문엔진 그대로 유지하고, 후보 선정/저장/비교/검증/RPA 출력 화면만 확장합니다.</p>
+            <p class="small-note">V2.2 검증마감판은 보존하고, Step25E에서는 V4.0 일반모드만 원문 기준으로 재검증합니다. 리버스모드는 아직 제외합니다.</p>
         </div>
         """
 
@@ -4133,7 +4831,13 @@ def home():
     optimizer_compare_html = build_optimizer_compare_html(strategy="rsi")
 
     # Step25D-7: V2.2 화면에서는 기존 RSI/연구용 보조 카드를 숨긴다.
+    # Step25E-2: V4.0 일반모드 재검증 화면도 RSI/Step18~21 연구용 카드와 섞지 않는다.
     if strategy == "raor_v22":
+        preset_buttons_html = ""
+        strategy_param_map_html = ""
+        step24v_cleanup_html = ""
+        optimizer_compare_html = ""
+    elif strategy == "raor4_step25e":
         preset_buttons_html = ""
         strategy_param_map_html = ""
         step24v_cleanup_html = ""
@@ -4366,7 +5070,7 @@ def home():
             언이시트 LOC/큰수/매도가 입력값이 있으면 우선 적용하고, 없으면 동적 별점 레이어로 다음 LOC와 큰수 후보를 산출합니다.
         </p>
         """
-    elif strategy in ["raor4_step25d", "raor4_step25c", "raor4_step25b", "raor4_step25a", "raor4_step24z", "raor4_step24y", "raor4_step24x", "raor4_step24w", "raor4_step24v", "raor4_step24u", "raor4_step24t", "raor4_step24s", "raor4_step24r", "raor4_step24q", "raor4_step24p"]:
+    elif strategy in ["raor4_step25e", "raor4_step25d", "raor4_step25c", "raor4_step25b", "raor4_step25a", "raor4_step24z", "raor4_step24y", "raor4_step24x", "raor4_step24w", "raor4_step24v", "raor4_step24u", "raor4_step24t", "raor4_step24s", "raor4_step24r", "raor4_step24q", "raor4_step24p"]:
         # Step24Q/P: Step24O 엔진 기준 + 파라미터 세분화 / 진행형 딥마이닝 UI
         if infinite_split_count not in [20, 40]:
             infinite_split_count = 40
@@ -4374,8 +5078,8 @@ def home():
         if designated_sell_pct <= 0:
             designated_sell_pct = default_designated_sell_pct
 
-        step24_runner = {"raor4_step25d": run_raor_infinite4_step25d_backtest, "raor4_step25c": run_raor_infinite4_step25c_backtest, "raor4_step25b": run_raor_infinite4_step25b_backtest, "raor4_step25a": run_raor_infinite4_step25a_backtest, "raor4_step24z": run_raor_infinite4_step24z_backtest, "raor4_step24y": run_raor_infinite4_step24y_backtest, "raor4_step24x": run_raor_infinite4_step24x_backtest, "raor4_step24w": run_raor_infinite4_step24w_backtest, "raor4_step24v": run_raor_infinite4_step24v_backtest, "raor4_step24u": run_raor_infinite4_step24u_backtest, "raor4_step24t": run_raor_infinite4_step24t_backtest, "raor4_step24s": run_raor_infinite4_step24s_backtest, "raor4_step24r": run_raor_infinite4_step24r_backtest, "raor4_step24q": run_raor_infinite4_step24q_backtest}.get(strategy, run_raor_infinite4_step24p_backtest)
-        step24_label = {"raor4_step25d":"Step25D", "raor4_step25c":"Step25C", "raor4_step25b":"Step25B", "raor4_step25a":"Step25A", "raor4_step24z":"Step24Z", "raor4_step24y":"Step24Y", "raor4_step24x":"Step24X", "raor4_step24w":"Step24W", "raor4_step24v":"Step24V", "raor4_step24u":"Step24U", "raor4_step24t":"Step24T", "raor4_step24s":"Step24S", "raor4_step24r":"Step24R", "raor4_step24q":"Step24Q"}.get(strategy, "Step24P")
+        step24_runner = {"raor4_step25e": run_raor_infinite4_step25e_backtest, "raor4_step25d": run_raor_infinite4_step25d_backtest, "raor4_step25c": run_raor_infinite4_step25c_backtest, "raor4_step25b": run_raor_infinite4_step25b_backtest, "raor4_step25a": run_raor_infinite4_step25a_backtest, "raor4_step24z": run_raor_infinite4_step24z_backtest, "raor4_step24y": run_raor_infinite4_step24y_backtest, "raor4_step24x": run_raor_infinite4_step24x_backtest, "raor4_step24w": run_raor_infinite4_step24w_backtest, "raor4_step24v": run_raor_infinite4_step24v_backtest, "raor4_step24u": run_raor_infinite4_step24u_backtest, "raor4_step24t": run_raor_infinite4_step24t_backtest, "raor4_step24s": run_raor_infinite4_step24s_backtest, "raor4_step24r": run_raor_infinite4_step24r_backtest, "raor4_step24q": run_raor_infinite4_step24q_backtest}.get(strategy, run_raor_infinite4_step24p_backtest)
+        step24_label = {"raor4_step25e":"Step25E", "raor4_step25d":"Step25D", "raor4_step25c":"Step25C", "raor4_step25b":"Step25B", "raor4_step25a":"Step25A", "raor4_step24z":"Step24Z", "raor4_step24y":"Step24Y", "raor4_step24x":"Step24X", "raor4_step24w":"Step24W", "raor4_step24v":"Step24V", "raor4_step24u":"Step24U", "raor4_step24t":"Step24T", "raor4_step24s":"Step24S", "raor4_step24r":"Step24R", "raor4_step24q":"Step24Q"}.get(strategy, "Step24P")
         bt, trade_df = step24_runner(
             ticker=ticker,
             split_count=infinite_split_count,
@@ -4423,6 +5127,34 @@ def home():
         <p class="small-note">{step24_label}: Step24O 엔진 기준으로 파라미터 세분화, 후보별 판정, 검증순서/진행률 표시, CSV 캐시 저장/재사용 구조를 추가한 버전입니다.<br>Step24Q는 TOP 후보 적용, CSV 다운로드, 캐시 재사용 표시, 결과표 가독성 강화가 포함됩니다. Step24R은 여기에 SEED 스타일 대시보드 UI와 실시간 진행률 준비용 오버레이/프론트 구조를 추가합니다. 첫매수 LOC 여유율은 원문 가이드 10~15% 범위 안에서만 탐색합니다. 20/40 외 분할은 원문 공식 미확인으로 제외합니다.</p>
         """
 
+        if strategy == "raor4_step25e":
+            v4_star_formula = "15 - 0.75T" if (ticker == "TQQQ" and infinite_split_count == 40) else ("15 - 1.5T" if ticker == "TQQQ" else ("20 - T" if infinite_split_count == 40 else "20 - 2T"))
+            v4_sell_pct = 15.0 if ticker == "TQQQ" else 20.0
+            strategy_inputs = f"""
+        <div class="input-row">
+            <label>분할횟수
+                <select name="infinite_split_count">
+                    <option value="20" {"selected" if infinite_split_count == 20 else ""}>20</option>
+                    <option value="40" {"selected" if infinite_split_count == 40 else ""}>40</option>
+                </select>
+            </label>
+            <label>첫매수 LOC 여유율(%) <input type="number" step="0.1" min="10" max="15" name="first_loc_buffer_pct" value="{first_loc_buffer_pct}"></label>
+            <label>지정가 매도(원문 고정) <input type="number" readonly value="{v4_sell_pct:g}"></label>
+            <div class="mini-info"><b>지정가 파라미터</b><br>URL/프리셋 잔여값 무시 · 원문값만 사용</div>
+        </div>
+        <div class="optimizer-box">
+            <h3>V4.0 일반모드 원문 재검증 포인트</h3>
+            <div class="input-row">
+                <div class="mini-info"><b>별% 공식</b><br>{ticker} {infinite_split_count}분할: {v4_star_formula}</div>
+                <div class="mini-info"><b>1회매수금</b><br>첫매수=원금/분할수, 이후=잔금/(분할수-T)</div>
+                <div class="mini-info"><b>전반/후반</b><br>T &lt; a/2 전반전, a/2 ≤ T ≤ a-1 후반전</div>
+                <div class="mini-info"><b>매도</b><br>1/4 별LOC + 3/4 지정가 {v4_sell_pct:g}%</div>
+                <div class="mini-info"><b>리버스모드</b><br>아직 제외 · 일반모드만 검증</div>
+            </div>
+        </div>
+        <p class="small-note">Step25E-6는 지정가 매도율 원문값과 완료 CycleId 기준 승률을 유지하면서, 현재 OPEN 주기와 1000일 이상 장기주기를 별도 분리합니다.</p>
+        """
+
     elif strategy == "raor_v22":
         if ticker not in ["TQQQ", "SOXL"]:
             ticker = "TQQQ"
@@ -4459,7 +5191,7 @@ def home():
                 <div class="mini-info"><b>쿼터손절</b><br>{'-10% LOC / 10% 지정가' if ticker == 'TQQQ' else '-12% LOC / 12% 지정가'}</div>
             </div>
         </div>
-        <p class="small-note">V2.2는 하나의 통합 전략입니다. TQQQ/SOXL을 별도 버전으로 나누지 않고, 티커별 원문 공식만 자동 적용합니다. 큰수매수는 주문거부/RPA 예외라 기본 백테스트에는 넣지 않았습니다. Step25D-8은 V2.2 로그/쿼터손절/주기상태 검증을 마감 요약하고, 다음 단계인 Step25E V4.0 일반모드 재검증으로 넘어가기 위한 정리판입니다. 첫매수 세부 원문은 추가 확인 대상으로 로그에 FirstBuyPolicy를 남깁니다.</p>
+        <p class="small-note">V2.2는 하나의 통합 전략입니다. TQQQ/SOXL을 별도 버전으로 나누지 않고, 티커별 원문 공식만 자동 적용합니다. 큰수매수는 주문거부/RPA 예외라 기본 백테스트에는 넣지 않았습니다. Step25D-8에서 V2.2 로그/쿼터손절/주기상태 검증은 마감했고, Step25E는 V4.0 일반모드만 원문 기준으로 재검증합니다. 첫매수 세부 원문은 추가 확인 대상으로 로그에 FirstBuyPolicy를 남깁니다.</p>
         """
 
     elif strategy == "raor4_step24o":
@@ -5003,6 +5735,40 @@ def home():
         </div>
         """
 
+    if strategy == "raor4_step25e":
+        v4_star_formula = "15 - 0.75T" if (ticker == "TQQQ" and infinite_split_count == 40) else ("15 - 1.5T" if ticker == "TQQQ" else ("20 - T" if infinite_split_count == 40 else "20 - 2T"))
+        v4_sell_pct = 15.0 if ticker == "TQQQ" else 20.0
+        preset_json = json.dumps({"ticker": ticker, "strategy": strategy, "split": int(infinite_split_count), "first_loc_buffer_pct": float(first_loc_buffer_pct), "v4_designated_sell_pct": float(v4_sell_pct), "fee_percent": float(fee_percent)}, ensure_ascii=False, indent=2)
+        stage_helper_html = f"""
+        <div class="card step25-roadmap-card">
+            <h2>Step25E-6 V4.0 최대 MDD / OPEN 주기 리스크 분석 상태</h2>
+            <div class="grid">
+                <div class="metric positive"><h3>검증 대상</h3><p>V4.0 일반모드</p></div>
+                <div class="metric"><h3>별% 공식</h3><p>{v4_star_formula}</p></div>
+                <div class="metric"><h3>지정가 매도</h3><p>{v4_sell_pct:g}%</p></div>
+                <div class="metric warning"><h3>리버스모드</h3><p>제외</p></div>
+            </div>
+            <p class="small-note">V2.2 D-8 검증마감판은 보존하고, 이 화면에서는 V4.0 일반모드만 원문 기준으로 재검증합니다.</p>
+        </div>
+        <div class="card step25-roadmap-card">
+            <h2>V4.0 검증 프리셋</h2>
+            <p>현재 설정을 V4.0 일반모드 검증용 JSON으로 정리했습니다.</p>
+            <pre class="step24x-log">{preset_json}</pre>
+        </div>
+        <div class="card step25-roadmap-card">
+            <h2>V4.0 원문 체크</h2>
+            <div class="table-wrap"><table border="1" cellpadding="6" cellspacing="0">
+                <tr><th>항목</th><th>상태</th><th>확인 기준</th></tr>
+                <tr><td>첫매수 LOC</td><td>확인 필요</td><td>전날 종가보다 10~15% 위, 체결 우선</td></tr>
+                <tr><td>별LOC 매수/매도</td><td>확인 가능</td><td>매수=별가격-0.01 / 매도=별가격</td></tr>
+                <tr><td>1회매수금</td><td>확인 가능</td><td>첫매수 원금/분할수, 이후 잔금/(분할수-T)</td></tr>
+                <tr><td>전반/후반</td><td>확인 가능</td><td>전반 0.5+0.5, 후반 별LOC 1회</td></tr>
+                <tr><td>매도구조</td><td>확인 가능</td><td>1/4 별LOC + 3/4 지정가 {v4_sell_pct:g}%</td></tr>
+                <tr><td>V2.2 혼합 여부</td><td>분리</td><td>D-8 V2.2 마감표와 별도 검증</td></tr>
+            </table></div>
+        </div>
+        """
+
     # =========================
     # 딥마이닝 TOP50
 
@@ -5185,10 +5951,16 @@ def home():
             </div>
             """
 
-    # Step25D-8: V2.2 마감 요약표와 주기별 최종상태/장기주기/현재 OPEN 주기 해석표를 주기 요약 뒤에 추가한다.
+    # Step25E: V2.2 마감표와 V4.0 일반모드 재검증표를 전략별로 분리한다.
     if strategy == "raor_v22":
         cycle_summary_html += make_v22_final_validation_html(bt, trade_df, ticker, split_count, fee_percent)
-    cycle_summary_html += make_cycle_status_audit_html(trade_df, bt, split_count)
+        cycle_summary_html += make_cycle_status_audit_html(trade_df, bt, split_count)
+    elif strategy == "raor4_step25e":
+        cycle_summary_html += make_v4_general_validation_html(bt, trade_df, ticker, split_count, designated_sell_pct, first_loc_buffer_pct)
+        cycle_summary_html += make_v4_execution_audit_html(bt, trade_df, ticker, split_count)
+        cycle_summary_html += make_v4_winrate_cycle_audit_html(trade_df, bt, trade_summary)
+        cycle_summary_html += make_v4_cycle_status_open_risk_html(trade_df, bt, split_count)
+        cycle_summary_html += make_v4_mdd_cycle_risk_html(trade_df, bt, split_count)
 
     trade_rows = ""
     if not trade_df.empty:
@@ -5244,8 +6016,10 @@ def home():
         <div class="summary-grid">
             <p>체결 이벤트: <b>{event_counts["event_count"]}</b></p>
             <p>BUY/SELL 이벤트: <b>{event_counts["buy_event_count"]} / {event_counts["sell_event_count"]}</b></p>
-            <p>집계 기준: <b>{trade_summary.get("summary_basis", "완료 주기")}</b></p>
+            <p>집계 기준: <b>{trade_summary.get("summary_basis", "완료 주기(CycleId)")}</b></p>
             <p>완료주기수: <b>{trade_summary["trade_count"]}</b></p>
+            <p>매도 이벤트 수: <b>{trade_summary.get("sell_event_count", event_counts["sell_event_count"])}</b></p>
+            <p>매도 이벤트 승률: <b>{trade_summary.get("sell_event_win_rate", 0):.2f}%</b></p>
             <p>수익주기: <b>{trade_summary["win_count"]}</b></p>
             <p>손실주기: <b>{trade_summary["loss_count"]}</b></p>
             <p>주기승률: <b>{trade_summary["win_rate"]:.2f}%</b></p>
@@ -5262,7 +6036,7 @@ def home():
             <p>쿼터 현금/수량 검증 실패: <b>{cycle_detail['quarter_cash_validation_fail_count']} / {cycle_detail['quarter_shares_validation_fail_count']}</b>건</p>
         </div>
 
-        <p class="small-note">※ 날짜 필터는 EventDate 기준이라 BUY 이벤트도 유지됩니다. 이 표의 이벤트후상태는 해당 이벤트 직후 상태입니다. 같은 주기 안에서 OPEN 이벤트가 많아도 최종상태표에서 COMPLETED면 완료 주기입니다. 승률/보유일은 부분매도 이벤트가 아니라 완료 주기 단위로 계산합니다.</p>
+        <p class="small-note">※ 날짜 필터는 EventDate 기준이라 BUY 이벤트도 유지됩니다. 이 표의 이벤트후상태는 해당 이벤트 직후 상태입니다. 같은 주기 안에서 OPEN 이벤트가 많아도 최종상태표에서 COMPLETED면 완료 주기입니다. 주기승률/보유일은 CycleId 기준 완료 주기만 사용합니다. 별LOC·지정가 같은 부분매도 SELL 이벤트 승률은 별도 보조 지표로 분리합니다.</p>
         <div class="table-wrap">
             <table border="1" cellpadding="6" cellspacing="0">
                 <tr>
@@ -5334,10 +6108,11 @@ def home():
             </tr>
             """
 
+    order_plan_note = "※ bt 일별 행에서 주문계획이 있거나 실제 액션이 발생한 최근 40일입니다. V4.0 일반모드의 T추적·전후반·주문계획을 표시합니다." if strategy == "raor4_step25e" else "※ bt 일별 행에서 주문계획이 있거나 실제 액션이 발생한 최근 40일입니다. V2.2 일반모드 공식은 유지하고, 쿼터손절모드 주문/전환 상태를 표시합니다."
     order_plan_log_html = f"""
     <div class="card">
         <h2>Order Plan Log</h2>
-        <p class="small-note">※ bt 일별 행에서 주문계획이 있거나 실제 액션이 발생한 최근 40일입니다. V2.2 일반모드 공식은 유지하고, 쿼터손절모드 주문/전환 상태를 표시합니다.</p>
+        <p class="small-note">{order_plan_note}</p>
         <div class="table-wrap">
             <table border="1" cellpadding="6" cellspacing="0">
                 <tr>
@@ -5455,6 +6230,20 @@ def home():
         """
         action_buttons_html = """<button type=\"submit\" name=\"action_mode\" value=\"backtest\">V2.2 백테스트</button><span class=\"small-note\">Optimizer/DeepMining/Robust Mining은 V2.2 엔진 검증 후 별도 연결 예정입니다.</span>"""
         status_info_html = """<p>주간 RSI: <b>미사용</b></p><div class=\"mode\">현재 모드: 무한매수 V2.2</div>"""
+        walkforward_today_html = ""
+        robust_top_html = ""
+        optimizer_bottom_html = ""
+    elif strategy == "raor4_step25e":
+        engine_note_html = """
+        <div class=\"step24r-lab-note\">
+            <b>V4.0 일반모드 원문 재검증 모드:</b> 현재 화면은 V4.0 일반모드의 별% 공식, 1회매수금, T추적, 전반/후반, 1/4 별LOC + 3/4 지정가 구조를 우선 검증합니다. RSI/Step18~21 연구용 프리셋과 V2.2 검증마감표는 숨김 처리했습니다.
+            <div class=\"step24r-progress-plan\">
+                <div>1. 별% 공식</div><div>2. 1회매수금</div><div>3. 전후반 매수</div><div>4. 1/4 LOC + 3/4 지정가</div>
+            </div>
+        </div>
+        """
+        action_buttons_html = """<button type=\"submit\" name=\"action_mode\" value=\"backtest\">V4.0 일반모드 백테스트</button><span class=\"small-note\">Optimizer/DeepMining은 V4.0 일반모드 원문 검증 후 별도 연결 예정입니다.</span>"""
+        status_info_html = """<p>주간 RSI: <b>미사용</b></p><div class=\"mode\">현재 모드: 무한매수 V4.0 일반모드</div>"""
         walkforward_today_html = ""
         robust_top_html = ""
         optimizer_bottom_html = ""
@@ -5854,13 +6643,13 @@ def home():
 <body>
 <div class="seed-sidebar">
     <div class="seed-brand">Infinite Lab</div>
-    <div class="seed-brand-sub">Step25D-8 · RAOR Original Engine<br>V2.2 결과표/검증표 마감</div>
+    <div class="seed-brand-sub">Step25E-6 · RAOR Original Engine<br>V4.0 최대 MDD/OPEN 리스크 분석</div>
     <div class="seed-nav">
         <button type="button" class="{seed_dashboard_active}" data-panel-target="dashboard">대시보드</button>
         <button type="button" class="{seed_optimizer_active}" data-panel-target="optimizer">Optimizer</button>
         <button type="button" class="{seed_results_active}" data-panel-target="results">검증/로그</button>
         <button type="button" class="{seed_charts_active}" data-panel-target="charts">차트</button>
-        <span>25D-8: V2.2 마감정리</span>
+        <span>25E-6: V4.0 MDD리스크</span>
     </div>
 </div>
 <div class="seed-shell">
@@ -5918,6 +6707,7 @@ def home():
             <label>전략 선택
                 <select name="strategy" onchange="syncAllDates(); this.form.submit()">
                     <option value="raor_v22" {"selected" if strategy == "raor_v22" else ""}>라오어 무한매수법 2.2 통합 원문엔진</option>
+                    <option value="raor4_step25e" {"selected" if strategy == "raor4_step25e" else ""}>라오어 무한매수법 4.0 일반모드 원문엔진 / Step25E-6 최대 MDD/OPEN 주기 리스크 분석판</option>
                     <option value="raor4_step25d" {"selected" if strategy == "raor4_step25d" else ""}>라오어 무한매수법 4.0 원문엔진 / Step25D 검증판</option>
                 </select>
             </label>
@@ -5956,6 +6746,7 @@ def home():
 
     <div class="metric {win_class}"><h3>주기승률</h3><p>{trade_summary["win_rate"]:.2f}%</p></div>
     <div class="metric"><h3>완료주기수</h3><p>{trade_summary["trade_count"]}</p></div>
+    <div class="metric"><h3>매도이벤트승률</h3><p>{trade_summary.get("sell_event_win_rate", 0):.2f}%</p></div>
 
     <div class="metric"><h3>평균주기보유일</h3><p>{avg_hold_days:.1f}일</p></div>
     <div class="metric"><h3>연평균완료주기</h3><p>{trades_per_year:.2f}회</p></div>

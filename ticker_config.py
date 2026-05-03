@@ -17,6 +17,7 @@ STRATEGY_LABELS = {
     "infinite4_v4": "무한매수4.0 V4 / Step23A-B-C",
     "infinite4_v5": "무한매수4.0 V5 / Step23E 동적별지점",
     "raor_v22": "라오어 무한매수법 2.2 원문엔진",
+    "raor4_step25e": "라오어 무한매수4.0 일반모드 원문엔진 / Step25E-2 UI 분리검증판",
     "raor4_step25d": "라오어 무한매수4.0 원문엔진 / Step25D 검증판",
     "raor4_step25c": "라오어 무한매수4.0 원문엔진 / Step25C",
     "raor4_step25b": "라오어 무한매수4.0 원문엔진 / Step25B",
