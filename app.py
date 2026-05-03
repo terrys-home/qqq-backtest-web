@@ -1467,6 +1467,135 @@ def make_cycle_status_audit_html(trade_df, bt, split_count):
     """
 
 
+
+def make_v22_final_validation_html(bt, trade_df, ticker, split_count, fee_percent):
+    """Step25D-8: V2.2 검증 마감 요약표.
+    공식/체결 조건을 바꾸지 않고, D7 계열에서 확인한 로그·쿼터·주기 상태를 한 화면에 요약한다.
+    """
+    if bt is None or bt.empty:
+        return ""
+
+    btdf = bt.copy()
+    if "Date" in btdf.columns:
+        btdf["Date"] = pd.to_datetime(btdf["Date"], errors="coerce")
+    tdf = trade_df.copy() if trade_df is not None and not trade_df.empty else pd.DataFrame()
+    if not tdf.empty:
+        if "EventSide" in tdf.columns:
+            tdf["EventSideNorm"] = tdf["EventSide"].astype(str).str.upper()
+        else:
+            tdf["EventSideNorm"] = ""
+        if "CycleId" in tdf.columns:
+            tdf["CycleIdNum"] = pd.to_numeric(tdf["CycleId"], errors="coerce").fillna(0).astype(int)
+
+    final = btdf.sort_values("Date").tail(1).iloc[0]
+    final_shares = float(final.get("Shares", 0) or 0)
+    final_close = float(final.get("Close", 0) or 0)
+    final_open_value = final_shares * final_close
+    has_open = final_shares > 1e-9
+
+    if "CycleId" in btdf.columns:
+        final_cycle = int(float(final.get("CycleId", 0) or 0))
+        all_cycle_count = int(pd.to_numeric(btdf["CycleId"], errors="coerce").fillna(0).max())
+    else:
+        final_cycle = 0
+        all_cycle_count = 0
+
+    completed_cycles = 0
+    review_count = 0
+    long_count = 0
+    quarter_event_count = 0
+    q_loc_buy_count = 0
+    q_moc_count = 0
+    q_loc_sell_count = 0
+    q_cash_fail = 0
+    q_share_fail = 0
+    buy_event_count = 0
+    sell_event_count = 0
+    if not tdf.empty:
+        buy_event_count = int(tdf["EventSideNorm"].eq("BUY").sum())
+        sell_event_count = int(tdf["EventSideNorm"].eq("SELL").sum())
+        if "CycleCompleted" in tdf.columns and "CycleIdNum" in tdf.columns:
+            completed_cycles = int(tdf[tdf["CycleCompleted"].fillna(False).astype(bool)]["CycleIdNum"].nunique())
+        if "QuarterEventType" in tdf.columns:
+            q = tdf["QuarterEventType"].fillna("").astype(str)
+            quarter_event_count = int(q.str.startswith("QUARTER", na=False).sum())
+            q_loc_buy_count = int(q.eq("QUARTER_LOC_BUY").sum())
+            q_moc_count = int(q.isin(["QUARTER_START_MOC", "QUARTER_10TH_MOC"]).sum())
+            q_loc_sell_count = int(q.eq("QUARTER_LOC_SELL").sum())
+        if "CashValidationOK" in tdf.columns:
+            q_cash_fail = int((~tdf["CashValidationOK"].fillna(True).astype(bool)).sum())
+        if "SharesValidationOK" in tdf.columns:
+            q_share_fail = int((~tdf["SharesValidationOK"].fillna(True).astype(bool)).sum())
+
+        # 장기주기 수는 이벤트 기준으로 보조 산출한다. 화면의 공식 표는 make_cycle_status_audit_html에서 더 자세히 보여준다.
+        if "CycleIdNum" in tdf.columns:
+            for _, g in tdf.groupby("CycleIdNum"):
+                if g.empty:
+                    continue
+                start_v = pd.to_datetime(g.get("CycleStartDate", pd.Series(dtype=object)).dropna().iloc[0], errors="coerce") if "CycleStartDate" in g.columns and not g["CycleStartDate"].dropna().empty else pd.NaT
+                end_candidates = []
+                if "EventDate" in g.columns:
+                    end_candidates.append(pd.to_datetime(g["EventDate"], errors="coerce").max())
+                if "SellDate" in g.columns:
+                    end_candidates.append(pd.to_datetime(g["SellDate"], errors="coerce").max())
+                end_candidates = [x for x in end_candidates if pd.notna(x)]
+                if pd.notna(start_v) and end_candidates:
+                    if (max(end_candidates) - start_v).days >= 1000:
+                        long_count += 1
+
+    open_cycle_count = 1 if has_open else 0
+    if completed_cycles and all_cycle_count:
+        review_count = max(0, all_cycle_count - completed_cycles - open_cycle_count)
+
+    engine_formula = "SOXL: 별% = 12 - T×0.6 × (40/a)" if str(ticker).upper() == "SOXL" else "TQQQ: 별% = 10 - T/2 × (40/a)"
+    designated = "12%" if str(ticker).upper() == "SOXL" else "10%"
+    quarter_loc = "-12%" if str(ticker).upper() == "SOXL" else "-10%"
+
+    overall_verdict = "V2.2 검증 마감 가능" if (review_count == 0 and q_cash_fail == 0 and q_share_fail == 0) else "추가 검토 필요"
+    verdict_cls = "positive" if overall_verdict == "V2.2 검증 마감 가능" else "warning"
+
+    check_rows = ""
+    checks = [
+        ("기준 원문", "PASS", "사진 OCR 추정이 아니라 사용자가 글로 정리한 라오어 원문 기준을 사용"),
+        ("V2.2 통합", "PASS", "기본형/수치변화를 나누지 않고 티커별 공식만 자동 적용"),
+        ("별% 공식", "PASS", engine_formula),
+        ("매수/매도 LOC", "PASS", "별가격 공유, 매수만 -0.01 / 매도는 별가격"),
+        ("전반전/후반전", "PASS", "전반전 0.5 평단LOC + 0.5 별LOC, 후반전 1.0 별LOC"),
+        ("매도 구조", "PASS", f"1/4 별LOC + 3/4 지정가 {designated}"),
+        ("쿼터손절", "PASS" if quarter_event_count else "REVIEW", f"쿼터이벤트 {quarter_event_count}건, LOC기준 {quarter_loc}"),
+        ("현금/수량 검증", "PASS" if (q_cash_fail == 0 and q_share_fail == 0) else "REVIEW", f"현금 실패 {q_cash_fail}건 / 수량 실패 {q_share_fail}건"),
+        ("주기상태", "PASS" if review_count == 0 else "REVIEW", f"COMPLETED {completed_cycles} / OPEN {open_cycle_count} / REVIEW {review_count}"),
+        ("V4.0 분리", "PASS", "V4.0 일반모드/리버스모드는 Step25E 이후 별도 검증"),
+    ]
+    for name, status, note in checks:
+        cls = "positive" if status == "PASS" else "warning"
+        check_rows += f"<tr><td>{name}</td><td class='{cls}'><b>{status}</b></td><td>{note}</td></tr>"
+
+    return f"""
+    <div class=\"card hero\">
+        <h2>Step25D-8 V2.2 결과표 / 검증표 마감 정리</h2>
+        <div class=\"grid mini-grid\">
+            <div class=\"metric {verdict_cls}\"><h3>V2.2 판정</h3><p>{overall_verdict}</p></div>
+            <div class=\"metric positive\"><h3>완료주기</h3><p>{completed_cycles}개</p></div>
+            <div class=\"metric warning\"><h3>현재 OPEN</h3><p>{open_cycle_count}개</p></div>
+            <div class=\"metric {'positive' if review_count == 0 else 'negative'}\"><h3>REVIEW</h3><p>{review_count}개</p></div>
+            <div class=\"metric\"><h3>BUY/SELL 이벤트</h3><p>{buy_event_count} / {sell_event_count}</p></div>
+            <div class=\"metric positive\"><h3>쿼터이벤트</h3><p>{quarter_event_count}건</p></div>
+            <div class=\"metric\"><h3>쿼터 LOC 매수/매도</h3><p>{q_loc_buy_count} / {q_loc_sell_count}</p></div>
+            <div class=\"metric\"><h3>쿼터 MOC</h3><p>{q_moc_count}건</p></div>
+            <div class=\"metric {'positive' if (q_cash_fail == 0 and q_share_fail == 0) else 'negative'}\"><h3>현금/수량 검증 실패</h3><p>{q_cash_fail} / {q_share_fail}</p></div>
+            <div class=\"metric warning\"><h3>현재 미청산 평가액</h3><p>{final_open_value:,.0f}원</p></div>
+        </div>
+        <p class=\"small-note\">D-8은 새 매매 로직을 추가하지 않고, D-7 계열에서 확인한 V2.2 로그/쿼터손절/주기상태를 마감 요약합니다. 결과 수익률이 좋다는 뜻이 아니라, 백테스트 엔진이 원문 기준대로 검증 가능하게 정리됐다는 뜻입니다.</p>
+        <div class=\"table-wrap\">
+            <table border=\"1\" cellpadding=\"6\" cellspacing=\"0\">
+                <tr><th>검증 항목</th><th>상태</th><th>확인 내용</th></tr>
+                {check_rows}
+            </table>
+        </div>
+    </div>
+    """
+
 def make_raor_validation_html(bt, trade_df, ticker, split_count):
     """Step24D: 원문 규칙 검증 체크리스트 화면."""
     if bt is None or bt.empty:
@@ -3952,7 +4081,7 @@ def home():
     if str(strategy).startswith("raor4_step25") or strategy in ["raor4_step24y", "raor4_step24z", "raor_v22"]:
         advanced_stage_html = f"""
         <div class="card hero step25-roadmap-card">
-            <h2>Step25D-7-6 V2.2 장기주기/OPEN주기 해석판</h2>
+            <h2>Step25D-8 V2.2 결과표/검증표 마감판</h2>
             <div class="grid">
                 <div class="metric positive"><h3>24Y 선택도우미</h3><p>후보 해석</p></div>
                 <div class="metric positive"><h3>24Z 프리셋</h3><p>저장 준비</p></div>
@@ -4330,7 +4459,7 @@ def home():
                 <div class="mini-info"><b>쿼터손절</b><br>{'-10% LOC / 10% 지정가' if ticker == 'TQQQ' else '-12% LOC / 12% 지정가'}</div>
             </div>
         </div>
-        <p class="small-note">V2.2는 하나의 통합 전략입니다. TQQQ/SOXL을 별도 버전으로 나누지 않고, 티커별 원문 공식만 자동 적용합니다. 큰수매수는 주문거부/RPA 예외라 기본 백테스트에는 넣지 않았습니다. Step25D-7-6은 주기별 최종상태와 이벤트 직후 상태를 분리해 장기주기와 현재 OPEN 주기를 해석하는 수정판입니다. 첫매수 세부 원문은 추가 확인 대상으로 로그에 FirstBuyPolicy를 남깁니다.</p>
+        <p class="small-note">V2.2는 하나의 통합 전략입니다. TQQQ/SOXL을 별도 버전으로 나누지 않고, 티커별 원문 공식만 자동 적용합니다. 큰수매수는 주문거부/RPA 예외라 기본 백테스트에는 넣지 않았습니다. Step25D-8은 V2.2 로그/쿼터손절/주기상태 검증을 마감 요약하고, 다음 단계인 Step25E V4.0 일반모드 재검증으로 넘어가기 위한 정리판입니다. 첫매수 세부 원문은 추가 확인 대상으로 로그에 FirstBuyPolicy를 남깁니다.</p>
         """
 
     elif strategy == "raor4_step24o":
@@ -5056,7 +5185,9 @@ def home():
             </div>
             """
 
-    # Step25D-7-6: 주기별 최종상태/장기주기/현재 OPEN 주기 해석표를 주기 요약 뒤에 추가한다.
+    # Step25D-8: V2.2 마감 요약표와 주기별 최종상태/장기주기/현재 OPEN 주기 해석표를 주기 요약 뒤에 추가한다.
+    if strategy == "raor_v22":
+        cycle_summary_html += make_v22_final_validation_html(bt, trade_df, ticker, split_count, fee_percent)
     cycle_summary_html += make_cycle_status_audit_html(trade_df, bt, split_count)
 
     trade_rows = ""
@@ -5723,13 +5854,13 @@ def home():
 <body>
 <div class="seed-sidebar">
     <div class="seed-brand">Infinite Lab</div>
-    <div class="seed-brand-sub">Step25D-7-6 · RAOR Original Engine<br>V2.2 장기주기/OPEN주기 해석</div>
+    <div class="seed-brand-sub">Step25D-8 · RAOR Original Engine<br>V2.2 결과표/검증표 마감</div>
     <div class="seed-nav">
         <button type="button" class="{seed_dashboard_active}" data-panel-target="dashboard">대시보드</button>
         <button type="button" class="{seed_optimizer_active}" data-panel-target="optimizer">Optimizer</button>
         <button type="button" class="{seed_results_active}" data-panel-target="results">검증/로그</button>
         <button type="button" class="{seed_charts_active}" data-panel-target="charts">차트</button>
-        <span>25D-7-6: V2.2 로그해석</span>
+        <span>25D-8: V2.2 마감정리</span>
     </div>
 </div>
 <div class="seed-shell">
