@@ -875,7 +875,7 @@ def calc_stability_score(train_summary, test_summary, mdd_worse):
 # =========================
 
 def get_sell_trade_df(trade_df):
-    """Trade Event Log가 BUY/SELL을 모두 담을 때 성과 집계는 SELL 이벤트만 사용한다."""
+    """Trade Event Log가 BUY/SELL을 모두 담을 때 SELL 이벤트만 분리한다."""
     if trade_df is None or trade_df.empty:
         return pd.DataFrame()
     if "EventSide" in trade_df.columns:
@@ -887,6 +887,52 @@ def get_sell_trade_df(trade_df):
     return trade_df.copy()
 
 
+def get_buy_trade_df(trade_df):
+    """Step25D-7-5: 실제 BUY 이벤트를 분리한다. 옛 로그에는 빈 DF를 반환한다."""
+    if trade_df is None or trade_df.empty:
+        return pd.DataFrame()
+    if "EventSide" in trade_df.columns:
+        return trade_df[trade_df["EventSide"].astype(str).str.upper() == "BUY"].copy()
+    if "OrderType" in trade_df.columns:
+        mask = trade_df["OrderType"].astype(str).str.upper().eq("BUY")
+        if mask.any():
+            return trade_df[mask].copy()
+    return pd.DataFrame()
+
+
+def filter_trade_df_by_period(trade_df, start_dt, end_dt):
+    """
+    Step25D-7-5: BUY/SELL 이벤트 로그는 SellDate 기준으로 필터링하면 BUY 이벤트가 모두 사라진다.
+    EventDate가 있으면 EventDate 기준으로 필터링하고, 구버전 로그만 SellDate 기준으로 fallback한다.
+    """
+    if trade_df is None or trade_df.empty:
+        return trade_df
+    df = trade_df.copy()
+    date_col = None
+    for c in ["EventDate", "SellDate", "BuyDate"]:
+        if c in df.columns:
+            date_col = c
+            break
+    if date_col is None:
+        return df
+    df["_EventFilterDate"] = pd.to_datetime(df[date_col], errors="coerce")
+    df = df[(df["_EventFilterDate"] >= start_dt) & (df["_EventFilterDate"] <= end_dt)].copy()
+    return df.drop(columns=["_EventFilterDate"], errors="ignore")
+
+
+def get_trade_event_counts(trade_df):
+    if trade_df is None or trade_df.empty:
+        return {"event_count": 0, "buy_event_count": 0, "sell_event_count": 0}
+    if "EventSide" in trade_df.columns:
+        side = trade_df["EventSide"].astype(str).str.upper()
+        return {
+            "event_count": int(len(trade_df)),
+            "buy_event_count": int((side == "BUY").sum()),
+            "sell_event_count": int((side == "SELL").sum()),
+        }
+    return {"event_count": int(len(trade_df)), "buy_event_count": 0, "sell_event_count": int(len(trade_df))}
+
+
 def fmt_log_date(value):
     if value is None or value == "" or pd.isna(value):
         return ""
@@ -896,8 +942,15 @@ def fmt_log_date(value):
         return str(value)
 
 def make_trade_summary(trade_df, bt):
-    trade_df = get_sell_trade_df(trade_df)
-    if trade_df.empty:
+    """
+    Step25D-7-5: V2.2 이벤트 로그에서 승률/보유일을 부분 SELL 이벤트 기준으로 계산하면
+    쿼터MOC/부분매도가 모두 개별 거래로 잡혀 왜곡된다.
+    - EventSide/CycleId가 있는 로그: 완료 주기 단위로 승률/보유일 계산
+    - 구버전 로그: 기존처럼 SELL 로그 기준으로 계산
+    """
+    if trade_df is None or trade_df.empty:
+        open_position = "있음" if (bt is not None and not bt.empty and float(bt.iloc[-1].get("Shares", 0) or 0) > 0) else "없음"
+        max_split = bt["CurrentSplit"].max() if bt is not None and not bt.empty and "CurrentSplit" in bt.columns else 0
         return {
             "trade_count": 0,
             "win_count": 0,
@@ -906,34 +959,80 @@ def make_trade_summary(trade_df, bt):
             "avg_hold_days": 0,
             "max_hold_days": 0,
             "trades_per_year": 0,
-            "open_position": "없음",
-            "max_split": 0,
+            "open_position": open_position,
+            "max_split": round(max_split, 1),
+            "summary_basis": "완료 주기",
         }
 
-    trade_count = len(trade_df)
-    win_count = len(trade_df[trade_df["Profit"] > 0])
-    loss_count = len(trade_df[trade_df["Profit"] <= 0])
-    win_rate = (win_count / trade_count) * 100 if trade_count > 0 else 0
+    sell_df = get_sell_trade_df(trade_df)
+    event_style = "EventSide" in trade_df.columns and "CycleId" in trade_df.columns
 
-    avg_hold_days = trade_df["HoldDays"].mean() if "HoldDays" in trade_df.columns else 0
-    max_hold_days = trade_df["HoldDays"].max() if "HoldDays" in trade_df.columns else 0
+    if event_style and bt is not None and not bt.empty and "CycleId" in bt.columns:
+        final_row = bt.tail(1).iloc[0]
+        open_now = float(final_row.get("Shares", 0) or 0) > 1e-9
+        max_cycle_id = int(pd.to_numeric(bt["CycleId"], errors="coerce").fillna(0).max())
+        inferred_last_completed = max_cycle_id - (1 if open_now else 0)
+        completed_ids = set(range(1, max(0, inferred_last_completed) + 1))
 
-    years = max((bt["Date"].max() - bt["Date"].min()).days / 365.25, 1)
+        if "CycleCompleted" in sell_df.columns:
+            completed_by_event = sell_df.loc[sell_df["CycleCompleted"].fillna(False).astype(bool), "CycleId"]
+            completed_ids |= set(pd.to_numeric(completed_by_event, errors="coerce").dropna().astype(int).tolist())
+
+        rows = []
+        if completed_ids and not sell_df.empty:
+            sdf = sell_df.copy()
+            sdf["CycleIdNum"] = pd.to_numeric(sdf["CycleId"], errors="coerce").fillna(0).astype(int)
+            sdf = sdf[sdf["CycleIdNum"].isin(completed_ids)].copy()
+            for cid, g in sdf.groupby("CycleIdNum"):
+                if g.empty:
+                    continue
+                profit = float(pd.to_numeric(g.get("Profit", 0), errors="coerce").fillna(0).sum())
+                buy_amount = float(pd.to_numeric(g.get("BuyAmount", 0), errors="coerce").fillna(0).sum())
+                start_v = pd.NaT
+                end_v = pd.NaT
+                if "CycleStartDate" in g.columns and not g["CycleStartDate"].dropna().empty:
+                    start_v = pd.to_datetime(g["CycleStartDate"].dropna().iloc[0], errors="coerce")
+                if pd.isna(start_v) and "BuyDate" in g.columns and not g["BuyDate"].dropna().empty:
+                    start_v = pd.to_datetime(g["BuyDate"].dropna().min(), errors="coerce")
+                if "SellEventDate" in g.columns and not g["SellEventDate"].dropna().empty:
+                    end_v = pd.to_datetime(g["SellEventDate"].dropna().max(), errors="coerce")
+                elif "SellDate" in g.columns and not g["SellDate"].dropna().empty:
+                    end_v = pd.to_datetime(g["SellDate"].dropna().max(), errors="coerce")
+                hold_days = int((end_v - start_v).days) if pd.notna(start_v) and pd.notna(end_v) else 0
+                rows.append({"CycleId": int(cid), "Profit": profit, "BuyAmount": buy_amount, "HoldDays": hold_days})
+
+        cycle_perf = pd.DataFrame(rows)
+        trade_count = len(cycle_perf)
+        win_count = int((cycle_perf["Profit"] > 0).sum()) if not cycle_perf.empty else 0
+        loss_count = int((cycle_perf["Profit"] <= 0).sum()) if not cycle_perf.empty else 0
+        win_rate = (win_count / trade_count) * 100 if trade_count > 0 else 0
+        avg_hold_days = cycle_perf["HoldDays"].mean() if not cycle_perf.empty else 0
+        max_hold_days = cycle_perf["HoldDays"].max() if not cycle_perf.empty else 0
+    else:
+        # 구버전/단일 매도 로그 전략 fallback
+        trade_count = len(sell_df)
+        win_count = len(sell_df[sell_df["Profit"] > 0]) if "Profit" in sell_df.columns else 0
+        loss_count = len(sell_df[sell_df["Profit"] <= 0]) if "Profit" in sell_df.columns else 0
+        win_rate = (win_count / trade_count) * 100 if trade_count > 0 else 0
+        avg_hold_days = sell_df["HoldDays"].mean() if "HoldDays" in sell_df.columns and not sell_df.empty else 0
+        max_hold_days = sell_df["HoldDays"].max() if "HoldDays" in sell_df.columns and not sell_df.empty else 0
+
+    years = max((bt["Date"].max() - bt["Date"].min()).days / 365.25, 1) if bt is not None and not bt.empty else 1
     trades_per_year = trade_count / years if years > 0 else 0
-
-    open_position = "있음" if bt.iloc[-1]["Shares"] > 0 else "없음"
-    max_split = bt["CurrentSplit"].max() if "CurrentSplit" in bt.columns else 0
+    open_position = "있음" if bt is not None and not bt.empty and float(bt.iloc[-1].get("Shares", 0) or 0) > 0 else "없음"
+    max_split = bt["CurrentSplit"].max() if bt is not None and not bt.empty and "CurrentSplit" in bt.columns else 0
 
     return {
         "trade_count": int(trade_count),
         "win_count": int(win_count),
         "loss_count": int(loss_count),
         "win_rate": round(win_rate, 2),
-        "avg_hold_days": round(avg_hold_days, 1),
+        "avg_hold_days": round(avg_hold_days, 1) if pd.notna(avg_hold_days) else 0,
         "max_hold_days": int(max_hold_days) if pd.notna(max_hold_days) else 0,
         "trades_per_year": round(trades_per_year, 2),
         "open_position": open_position,
         "max_split": round(max_split, 1),
+        "summary_basis": "완료 주기" if event_style else "매도 이벤트",
     }
 
 
@@ -1039,6 +1138,24 @@ def make_cycle_detail_summary(trade_df, bt, split_count, cycle_status):
         "second_half_count": 0,
         "exhaust_count": 0,
         "quarter_sell_count": 0,
+        "quarter_start_count": 0,
+        "quarter_moc_count": 0,
+        "quarter_loc_buy_count": 0,
+        "quarter_loc_sell_count": 0,
+        "quarter_exit_count": 0,
+        "quarter_repeat_count": 0,
+        "quarter_trigger_candidate_count": 0,
+        "quarter_trigger_executed_count": 0,
+        "quarter_cash_validation_fail_count": 0,
+        "quarter_shares_validation_fail_count": 0,
+        "quarter_cost_basis_validation_fail_count": 0,
+        "quarter_total_moc_sell_amount": 0.0,
+        "quarter_total_moc_sell_qty": 0.0,
+        "quarter_total_loc_buy_amount": 0.0,
+        "quarter_total_loc_buy_qty": 0.0,
+        "quarter_total_loc_sell_amount": 0.0,
+        "quarter_total_loc_sell_qty": 0.0,
+        "quarter_max_cash_delta_diff": 0.0,
     }
     if bt is None or bt.empty or "CycleId" not in bt.columns:
         return detail
@@ -1052,6 +1169,11 @@ def make_cycle_detail_summary(trade_df, bt, split_count, cycle_status):
     detail["avg_max_t"] = float(max_t_by_cycle.mean()) if not max_t_by_cycle.empty else 0.0
     detail["max_used_t"] = float(max_t_by_cycle.max()) if not max_t_by_cycle.empty else 0.0
 
+    if "QuarterTriggerCandidate" in temp.columns:
+        detail["quarter_trigger_candidate_count"] = int(temp["QuarterTriggerCandidate"].fillna(False).astype(bool).sum())
+    if "QuarterTriggerExecuted" in temp.columns:
+        detail["quarter_trigger_executed_count"] = int(temp["QuarterTriggerExecuted"].fillna(False).astype(bool).sum())
+
     if "PhaseAfter" in temp.columns:
         detail["second_half_count"] = int(temp.loc[temp["PhaseAfter"] == "후반전", "CycleIdNum"].nunique())
         detail["exhaust_count"] = int(temp.loc[temp["PhaseAfter"] == "소진모드", "CycleIdNum"].nunique())
@@ -1061,8 +1183,47 @@ def make_cycle_detail_summary(trade_df, bt, split_count, cycle_status):
 
     if trade_df is not None and not trade_df.empty:
         sell_events = get_sell_trade_df(trade_df)
+        all_events = trade_df.copy()
+        reason_all = all_events["Reason"].astype(str) if "Reason" in all_events.columns else pd.Series(dtype=str)
+        transition_all = all_events["ModeTransitionReason"].astype(str) if "ModeTransitionReason" in all_events.columns else pd.Series(dtype=str)
         if "Reason" in sell_events.columns:
             detail["quarter_sell_count"] = int(sell_events["Reason"].astype(str).str.contains("쿼터", na=False).sum())
+        if not all_events.empty:
+            qtype = all_events["QuarterEventType"].astype(str) if "QuarterEventType" in all_events.columns else pd.Series([""] * len(all_events), index=all_events.index)
+            if "QuarterEventType" in all_events.columns:
+                detail["quarter_start_count"] = int((qtype == "QUARTER_START_MOC").sum())
+                detail["quarter_moc_count"] = int(qtype.isin(["QUARTER_START_MOC", "QUARTER_10TH_MOC"]).sum())
+                detail["quarter_loc_buy_count"] = int((qtype == "QUARTER_LOC_BUY").sum())
+                detail["quarter_loc_sell_count"] = int((qtype == "QUARTER_LOC_SELL").sum())
+            else:
+                detail["quarter_start_count"] = int(reason_all.str.contains("쿼터손절 시작", na=False).sum())
+                detail["quarter_moc_count"] = int(reason_all.str.contains("쿼터.*MOC|MOC.*쿼터", regex=True, na=False).sum())
+                detail["quarter_loc_buy_count"] = int(reason_all.str.contains("쿼터손절 LOC매수", na=False).sum())
+                detail["quarter_loc_sell_count"] = int(reason_all.str.contains("쿼터손절 LOC매도", na=False).sum())
+            detail["quarter_exit_count"] = int(transition_all.str.contains("복귀", na=False).sum())
+            detail["quarter_repeat_count"] = int(transition_all.str.contains("반복", na=False).sum())
+
+            qevents = all_events[qtype.str.startswith("QUARTER", na=False)].copy()
+            if not qevents.empty:
+                def _sum_num(df, col):
+                    return float(pd.to_numeric(df[col], errors="coerce").fillna(0).sum()) if col in df.columns else 0.0
+                moc_events = qevents[qtype.loc[qevents.index].isin(["QUARTER_START_MOC", "QUARTER_10TH_MOC"])]
+                q_buy_events = qevents[qtype.loc[qevents.index].eq("QUARTER_LOC_BUY")]
+                q_loc_sell_events = qevents[qtype.loc[qevents.index].eq("QUARTER_LOC_SELL")]
+                detail["quarter_total_moc_sell_amount"] = _sum_num(moc_events, "SellAmount")
+                detail["quarter_total_moc_sell_qty"] = _sum_num(moc_events, "SharesSold")
+                detail["quarter_total_loc_buy_amount"] = _sum_num(q_buy_events, "BuyAmount")
+                detail["quarter_total_loc_buy_qty"] = _sum_num(q_buy_events, "SharesBought")
+                detail["quarter_total_loc_sell_amount"] = _sum_num(q_loc_sell_events, "SellAmount")
+                detail["quarter_total_loc_sell_qty"] = _sum_num(q_loc_sell_events, "SharesSold")
+                if "CashValidationOK" in qevents.columns:
+                    detail["quarter_cash_validation_fail_count"] = int((~qevents["CashValidationOK"].fillna(True).astype(bool)).sum())
+                if "SharesValidationOK" in qevents.columns:
+                    detail["quarter_shares_validation_fail_count"] = int((~qevents["SharesValidationOK"].fillna(True).astype(bool)).sum())
+                if "CostBasisValidationOK" in qevents.columns:
+                    detail["quarter_cost_basis_validation_fail_count"] = int((~qevents["CostBasisValidationOK"].fillna(True).astype(bool)).sum())
+                if "CashDeltaDiff" in qevents.columns:
+                    detail["quarter_max_cash_delta_diff"] = float(pd.to_numeric(qevents["CashDeltaDiff"], errors="coerce").abs().fillna(0).max())
         if "CycleId" in sell_events.columns:
             tdf = sell_events.copy()
             tdf["CycleIdNum"] = pd.to_numeric(tdf["CycleId"], errors="coerce").fillna(0).astype(int)
@@ -1090,6 +1251,222 @@ def make_cycle_detail_summary(trade_df, bt, split_count, cycle_status):
     return detail
 
 
+
+
+def make_cycle_status_audit_html(trade_df, bt, split_count):
+    """Step25D-7-6: 최종 주기상태와 이벤트 후 상태를 분리해서 보여주는 검증표.
+    목적:
+    - 1000일 이상 장기 주기가 표시 오류인지 실제 장기 보유 후 종료인지 확인한다.
+    - Trade Event Log의 OPEN은 '이벤트 직후 상태'임을 분리한다.
+    - 이 표는 주기별 '최종 상태' 기준이다.
+    """
+    if bt is None or bt.empty or "CycleId" not in bt.columns:
+        return ""
+
+    btdf = bt.copy()
+    btdf["CycleIdNum"] = pd.to_numeric(btdf["CycleId"], errors="coerce").fillna(0).astype(int)
+    btdf = btdf[btdf["CycleIdNum"] > 0].copy()
+    if btdf.empty:
+        return ""
+    btdf["Date"] = pd.to_datetime(btdf["Date"], errors="coerce")
+
+    event_df = trade_df.copy() if trade_df is not None and not trade_df.empty else pd.DataFrame()
+    if not event_df.empty and "CycleId" in event_df.columns:
+        event_df["CycleIdNum"] = pd.to_numeric(event_df["CycleId"], errors="coerce").fillna(0).astype(int)
+        if "EventDate" in event_df.columns:
+            event_df["EventDateTS"] = pd.to_datetime(event_df["EventDate"], errors="coerce")
+        elif "SellDate" in event_df.columns:
+            event_df["EventDateTS"] = pd.to_datetime(event_df["SellDate"], errors="coerce")
+        else:
+            event_df["EventDateTS"] = pd.NaT
+    else:
+        event_df = pd.DataFrame()
+
+    final = btdf.sort_values("Date").tail(1).iloc[0]
+    final_cycle = int(final.get("CycleIdNum", 0) or 0)
+    final_shares = float(final.get("Shares", 0) or 0)
+    final_close = float(final.get("Close", 0) or 0)
+    final_date = pd.to_datetime(final.get("Date"), errors="coerce")
+    open_now = final_shares > 1e-9
+
+    cycle_ids = sorted(set(btdf["CycleIdNum"].dropna().astype(int).tolist()) | (set(event_df["CycleIdNum"].dropna().astype(int).tolist()) if not event_df.empty else set()))
+    rows = []
+    completed_count = 0
+    open_count = 0
+    need_review_count = 0
+    long_cycle_count = 0
+    long_completed_count = 0
+
+    for cid in cycle_ids:
+        if cid <= 0:
+            continue
+        gbt = btdf[btdf["CycleIdNum"] == cid].copy()
+        gev = event_df[event_df["CycleIdNum"] == cid].copy() if not event_df.empty else pd.DataFrame()
+
+        buy_events = gev[gev.get("EventSide", pd.Series(dtype=str)).astype(str).str.upper().eq("BUY")] if not gev.empty and "EventSide" in gev.columns else pd.DataFrame()
+        sell_events = gev[gev.get("EventSide", pd.Series(dtype=str)).astype(str).str.upper().eq("SELL")] if not gev.empty and "EventSide" in gev.columns else pd.DataFrame()
+
+        start_v = pd.NaT
+        if not buy_events.empty and "EventDateTS" in buy_events.columns:
+            start_v = buy_events["EventDateTS"].dropna().min()
+        if pd.isna(start_v) and not gev.empty and "CycleStartDate" in gev.columns and not gev["CycleStartDate"].dropna().empty:
+            start_v = pd.to_datetime(gev["CycleStartDate"].dropna().iloc[0], errors="coerce")
+        if pd.isna(start_v) and not gbt.empty:
+            pos_rows = gbt[pd.to_numeric(gbt.get("Shares", 0), errors="coerce").fillna(0) > 1e-9]
+            start_v = pos_rows["Date"].min() if not pos_rows.empty else gbt["Date"].min()
+
+        completed_event = pd.DataFrame()
+        if not sell_events.empty and "CycleCompleted" in sell_events.columns:
+            completed_event = sell_events[sell_events["CycleCompleted"].fillna(False).astype(bool)].copy()
+        completed = not completed_event.empty
+        is_active = bool(open_now and cid == final_cycle)
+
+        if completed:
+            end_v = completed_event["EventDateTS"].dropna().max() if "EventDateTS" in completed_event.columns else pd.NaT
+            status = "COMPLETED"
+            end_reason = "전량매도완료"
+            open_qty = 0.0
+            open_value = 0.0
+            completed_count += 1
+        elif is_active:
+            end_v = final_date
+            status = "OPEN"
+            end_reason = "기간종료미청산"
+            open_qty = final_shares
+            open_value = final_shares * final_close
+            open_count += 1
+        else:
+            end_v = gev["EventDateTS"].dropna().max() if not gev.empty and "EventDateTS" in gev.columns and not gev["EventDateTS"].dropna().empty else (gbt["Date"].max() if not gbt.empty else pd.NaT)
+            status = "REVIEW"
+            end_reason = "완료이벤트확인필요"
+            last_qty = float(pd.to_numeric(gbt["Shares"], errors="coerce").fillna(0).iloc[-1]) if not gbt.empty and "Shares" in gbt.columns else 0.0
+            last_close = float(pd.to_numeric(gbt["Close"], errors="coerce").fillna(0).iloc[-1]) if not gbt.empty and "Close" in gbt.columns else 0.0
+            open_qty = last_qty
+            open_value = last_qty * last_close
+            need_review_count += 1
+
+        days_v = int((pd.to_datetime(end_v) - pd.to_datetime(start_v)).days) if pd.notna(start_v) and pd.notna(end_v) else 0
+        is_long = days_v >= 1000
+        if is_long:
+            long_cycle_count += 1
+            if status == "COMPLETED":
+                long_completed_count += 1
+
+        max_t_col = "T" if "T" in gbt.columns else "CurrentSplit"
+        max_t = float(pd.to_numeric(gbt[max_t_col], errors="coerce").fillna(0).max()) if not gbt.empty and max_t_col in gbt.columns else 0.0
+        profit_v = float(pd.to_numeric(sell_events.get("Profit", pd.Series(dtype=float)), errors="coerce").fillna(0).sum()) if not sell_events.empty else 0.0
+        buy_v = float(pd.to_numeric(gev.get("BuyAmount", pd.Series(dtype=float)), errors="coerce").fillna(0).sum()) if not gev.empty else 0.0
+        sell_v = float(pd.to_numeric(sell_events.get("SellAmount", pd.Series(dtype=float)), errors="coerce").fillna(0).sum()) if not sell_events.empty else 0.0
+        q_count = int(gev.get("QuarterEventType", pd.Series(dtype=str)).astype(str).str.startswith("QUARTER", na=False).sum()) if not gev.empty and "QuarterEventType" in gev.columns else 0
+        last_action = str(gbt.sort_values("Date").tail(1).iloc[0].get("Action", ""))[:80] if not gbt.empty else ""
+
+        cls = "positive" if status == "COMPLETED" else ("warning" if status == "OPEN" else "negative")
+        long_mark = " ⚠️" if is_long else ""
+        rows.append({
+            "cid": cid,
+            "status": status,
+            "cls": cls,
+            "start": pd.to_datetime(start_v).strftime("%Y-%m-%d") if pd.notna(start_v) else "",
+            "end": pd.to_datetime(end_v).strftime("%Y-%m-%d") if pd.notna(end_v) else "",
+            "days": days_v,
+            "long_mark": long_mark,
+            "end_reason": end_reason,
+            "max_t": max_t,
+            "open_qty": open_qty,
+            "open_value": open_value,
+            "buy_v": buy_v,
+            "sell_v": sell_v,
+            "profit_v": profit_v,
+            "buy_count": len(buy_events),
+            "sell_count": len(sell_events),
+            "q_count": q_count,
+            "last_action": last_action,
+        })
+
+    trs = ""
+    for r in rows[-120:]:
+        trs += f"""
+        <tr>
+            <td>{r['cid']}</td>
+            <td class=\"{r['cls']}\">{r['status']}</td>
+            <td>{r['start']}</td>
+            <td>{r['end']}</td>
+            <td>{r['days']}{r['long_mark']}</td>
+            <td>{r['end_reason']}</td>
+            <td>{r['max_t']:.1f}T</td>
+            <td>{r['open_qty']:,.4f}</td>
+            <td>{r['open_value']:,.0f}</td>
+            <td>{r['buy_v']:,.0f}</td>
+            <td>{r['sell_v']:,.0f}</td>
+            <td>{r['profit_v']:,.0f}</td>
+            <td>{r['buy_count']} / {r['sell_count']}</td>
+            <td>{r['q_count']}</td>
+            <td>{r['last_action']}</td>
+        </tr>
+        """
+
+    long_rows = ""
+    for r in [x for x in rows if x["days"] >= 1000]:
+        long_rows += f"""
+        <tr>
+            <td>{r['cid']}</td><td class=\"{r['cls']}\">{r['status']}</td><td>{r['start']}</td><td>{r['end']}</td>
+            <td>{r['days']}</td><td>{r['end_reason']}</td><td>{r['profit_v']:,.0f}</td><td>{r['buy_count']} / {r['sell_count']}</td><td>{r['q_count']}</td>
+        </tr>
+        """
+    if not long_rows:
+        long_rows = "<tr><td colspan='9'>1000일 이상 장기 주기 없음</td></tr>"
+
+    open_rows = ""
+    for r in [x for x in rows if x["status"] == "OPEN"]:
+        open_rows += f"""
+        <tr>
+            <td>{r['cid']}</td><td>{r['start']}</td><td>{r['end']}</td><td>{r['days']}</td>
+            <td>{r['open_qty']:,.4f}</td><td>{r['open_value']:,.0f}</td><td>{r['max_t']:.1f}T</td><td>{r['last_action']}</td>
+        </tr>
+        """
+    if not open_rows:
+        open_rows = "<tr><td colspan='8'>현재 OPEN 주기 없음</td></tr>"
+
+    return f"""
+    <div class=\"card\">
+        <h2>Step25D-7-6 FinalCycleStatus / 장기주기 / OPEN주기 해석판</h2>
+        <div class=\"grid mini-grid\">
+            <div class=\"metric positive\"><h3>최종 COMPLETED</h3><p>{completed_count}개</p></div>
+            <div class=\"metric warning\"><h3>최종 OPEN</h3><p>{open_count}개</p></div>
+            <div class=\"metric {'positive' if need_review_count == 0 else 'negative'}\"><h3>REVIEW</h3><p>{need_review_count}개</p></div>
+            <div class=\"metric {'warning' if long_cycle_count else 'positive'}\"><h3>1000일 이상 장기주기</h3><p>{long_cycle_count}개</p></div>
+            <div class=\"metric {'warning' if long_completed_count else 'positive'}\"><h3>장기 완료주기</h3><p>{long_completed_count}개</p></div>
+            <div class=\"metric warning\"><h3>현재 미청산 평가액</h3><p>{final_shares * final_close:,.0f}원</p></div>
+        </div>
+        <p class=\"small-note\">이 표는 주기별 <b>최종 상태</b> 기준입니다. Trade Event Log의 OPEN은 해당 이벤트 직후 상태라서, 같은 주기 안에서 OPEN 이벤트가 많아도 최종 행이 COMPLETED이면 완료 주기입니다.</p>
+
+        <h3>1000일 이상 장기 주기 상세</h3>
+        <div class=\"table-wrap\">
+            <table border=\"1\" cellpadding=\"6\" cellspacing=\"0\">
+                <tr><th>주기</th><th>최종상태</th><th>시작일</th><th>종료/기준일</th><th>주기일수</th><th>최종종료사유</th><th>손익</th><th>BUY/SELL</th><th>쿼터이벤트</th></tr>
+                {long_rows}
+            </table>
+        </div>
+
+        <h3>현재 OPEN 주기 상세</h3>
+        <div class=\"table-wrap\">
+            <table border=\"1\" cellpadding=\"6\" cellspacing=\"0\">
+                <tr><th>주기</th><th>시작일</th><th>기준일</th><th>경과일</th><th>OpenQty</th><th>Open평가액</th><th>최대T</th><th>마지막액션</th></tr>
+                {open_rows}
+            </table>
+        </div>
+
+        <h3>전체 주기별 최종 상태</h3>
+        <div class=\"table-wrap\">
+            <table border=\"1\" cellpadding=\"6\" cellspacing=\"0\">
+                <tr><th>주기</th><th>최종상태</th><th>시작일</th><th>종료/기준일</th><th>주기일수</th><th>최종종료사유</th><th>최대T</th><th>최종OpenQty</th><th>최종Open평가액</th><th>매수금액</th><th>매도금액</th><th>손익</th><th>BUY/SELL</th><th>쿼터이벤트</th><th>마지막액션</th></tr>
+                {trs}
+            </table>
+        </div>
+    </div>
+    """
+
+
 def make_raor_validation_html(bt, trade_df, ticker, split_count):
     """Step24D: 원문 규칙 검증 체크리스트 화면."""
     if bt is None or bt.empty:
@@ -1099,8 +1476,8 @@ def make_raor_validation_html(bt, trade_df, ticker, split_count):
     checks.append(("T 증가 단위", "TDelta" in bt.columns, "TBefore/TAfter/TDelta 컬럼으로 0.5T·1T 증가 여부 확인"))
     checks.append(("별% 공식", ticker in ["TQQQ", "SOXL"] and int(split_count) in [20, 40], "TQQQ/SOXL 20·40분할 공식만 허용"))
     checks.append(("전반전/후반전", any(c in bt.columns for c in ["PhaseBefore", "PhaseAfter", "Mode"]), "PhaseBefore/PhaseAfter 또는 Mode로 전환 구간 확인"))
-    checks.append(("쿼터매도", trade_df is not None and not trade_df.empty and "Reason" in trade_df.columns, "Reason 컬럼에서 쿼터매도 발생일 확인"))
-    checks.append(("소진모드", any(c in bt.columns for c in ["RemainingTAfter", "Mode", "PhaseAfter"]), "RemainingTAfter 및 PhaseAfter로 소진모드 진입 확인"))
+    checks.append(("쿼터손절", trade_df is not None and not trade_df.empty and "Reason" in trade_df.columns, "Reason/ModeTransitionReason 컬럼에서 쿼터손절 발생·복귀·반복 확인"))
+    checks.append(("소진권 후보", "QuarterTriggerCandidate" in bt.columns, "QuarterTriggerCandidate/QuarterTriggerReason으로 발동·미발동 사유 확인"))
     rows = ""
     for name, ok, memo in checks:
         mark = "✅" if ok else "⚠️"
@@ -1109,7 +1486,7 @@ def make_raor_validation_html(bt, trade_df, ticker, split_count):
     return f"""
     <div class="card">
         <h2>Step24D 원문 규칙 검증 체크리스트</h2>
-        <p class="small-note">※ Step25D-6-2부터 이 표는 실제 BUY/SELL 이벤트 기준입니다. CycleStartDate, EventDate, BuyEventDate, SellEventDate, LastBuyDate를 분리해 장기 주기가 날짜 점프처럼 보이는 문제를 줄였습니다. 승률/거래수 성과 집계는 SELL 이벤트만 사용합니다.</p>
+        <p class="small-note">※ Step24D 이후 원문 규칙을 화면에서 검증하기 위한 체크리스트입니다. 미확인 공식은 추가 확인 대상으로 남깁니다.</p>
         <div class="table-wrap">
             <table border="1" cellpadding="6" cellspacing="0">
                 <tr><th>상태</th><th>항목</th><th>판정</th><th>확인 포인트</th></tr>
@@ -3575,7 +3952,7 @@ def home():
     if str(strategy).startswith("raor4_step25") or strategy in ["raor4_step24y", "raor4_step24z", "raor_v22"]:
         advanced_stage_html = f"""
         <div class="card hero step25-roadmap-card">
-            <h2>Step25D-6 V2.2 로그 보정 진행판</h2>
+            <h2>Step25D-7-6 V2.2 장기주기/OPEN주기 해석판</h2>
             <div class="grid">
                 <div class="metric positive"><h3>24Y 선택도우미</h3><p>후보 해석</p></div>
                 <div class="metric positive"><h3>24Z 프리셋</h3><p>저장 준비</p></div>
@@ -3626,7 +4003,7 @@ def home():
     step24v_cleanup_html = build_step24v_cleanup_html(strategy)
     optimizer_compare_html = build_optimizer_compare_html(strategy="rsi")
 
-    # Step25D-6: V2.2 화면에서는 기존 RSI/연구용 보조 카드를 숨긴다.
+    # Step25D-7: V2.2 화면에서는 기존 RSI/연구용 보조 카드를 숨긴다.
     if strategy == "raor_v22":
         preset_buttons_html = ""
         strategy_param_map_html = ""
@@ -3950,9 +4327,10 @@ def home():
                 <div class="mini-info"><b>매수/매도 가격분리</b><br>매수=별가격-0.01 / 매도=별가격</div>
                 <div class="mini-info"><b>전반/후반</b><br>T &lt; a/2 전반전, T ≥ a/2 후반전</div>
                 <div class="mini-info"><b>매도</b><br>1/4 별LOC + 3/4 지정가 {v22_designated:g}%</div>
+                <div class="mini-info"><b>쿼터손절</b><br>{'-10% LOC / 10% 지정가' if ticker == 'TQQQ' else '-12% LOC / 12% 지정가'}</div>
             </div>
         </div>
-        <p class="small-note">V2.2는 하나의 통합 전략입니다. TQQQ/SOXL을 별도 버전으로 나누지 않고, 티커별 원문 공식만 자동 적용합니다. 큰수매수는 주문거부/RPA 예외라 기본 백테스트에는 넣지 않았습니다. 첫매수 세부 원문은 추가 확인 대상으로 로그에 FirstBuyPolicy를 남깁니다.</p>
+        <p class="small-note">V2.2는 하나의 통합 전략입니다. TQQQ/SOXL을 별도 버전으로 나누지 않고, 티커별 원문 공식만 자동 적용합니다. 큰수매수는 주문거부/RPA 예외라 기본 백테스트에는 넣지 않았습니다. Step25D-7-6은 주기별 최종상태와 이벤트 직후 상태를 분리해 장기주기와 현재 OPEN 주기를 해석하는 수정판입니다. 첫매수 세부 원문은 추가 확인 대상으로 로그에 FirstBuyPolicy를 남깁니다.</p>
         """
 
     elif strategy == "raor4_step24o":
@@ -4255,11 +4633,7 @@ def home():
         return "선택한 기간에 백테스트 데이터가 없습니다. 시작일/종료일을 확인해주세요."
 
     if not trade_df.empty:
-        trade_df["SellDate_dt"] = pd.to_datetime(trade_df["SellDate"])
-        trade_df = trade_df[
-            (trade_df["SellDate_dt"] >= start_dt) &
-            (trade_df["SellDate_dt"] <= end_dt)
-        ].copy()
+        trade_df = filter_trade_df_by_period(trade_df, start_dt, end_dt)
 
 
     # =========================
@@ -4295,6 +4669,7 @@ def home():
     cagr = calc_cagr(bt)
 
     trade_summary = make_trade_summary(trade_df, bt)
+    event_counts = get_trade_event_counts(trade_df)
 
     avg_hold_days = trade_summary["avg_hold_days"]
     trades_per_year = trade_summary["trades_per_year"]
@@ -4324,12 +4699,18 @@ def home():
         estimated_fee = 0
         profit_factor = 0
     else:
-        buy_fee = trade_df["BuyAmount"].fillna(0).sum() * (fee_percent / 100)
-        sell_fee = trade_df["SellAmount"].fillna(0).sum() * (fee_percent / 100)
+        if "EventSide" in trade_df.columns and "FeeAmount" in trade_df.columns:
+            _side = trade_df["EventSide"].astype(str).str.upper()
+            buy_fee = float(pd.to_numeric(trade_df.loc[_side == "BUY", "FeeAmount"], errors="coerce").fillna(0).sum())
+            sell_fee = float(pd.to_numeric(trade_df.loc[_side == "SELL", "FeeAmount"], errors="coerce").fillna(0).sum())
+        else:
+            buy_fee = trade_df["BuyAmount"].fillna(0).sum() * (fee_percent / 100) if "BuyAmount" in trade_df.columns else 0
+            sell_fee = trade_df["SellAmount"].fillna(0).sum() * (fee_percent / 100) if "SellAmount" in trade_df.columns else 0
         estimated_fee = buy_fee + sell_fee
 
-        gross_profit = trade_df[trade_df["Profit"] > 0]["Profit"].sum()
-        gross_loss = abs(trade_df[trade_df["Profit"] < 0]["Profit"].sum())
+        _sell_for_pf = get_sell_trade_df(trade_df)
+        gross_profit = _sell_for_pf[_sell_for_pf["Profit"] > 0]["Profit"].sum() if "Profit" in _sell_for_pf.columns else 0
+        gross_loss = abs(_sell_for_pf[_sell_for_pf["Profit"] < 0]["Profit"].sum()) if "Profit" in _sell_for_pf.columns else 0
 
         if gross_loss > 0:
             profit_factor = gross_profit / gross_loss
@@ -4640,7 +5021,16 @@ def home():
                     <div class="metric"><h3>최대 소진T</h3><p>{cycle_detail['max_used_t']:.1f}T</p></div>
                     <div class="metric"><h3>후반전 진입</h3><p>{cycle_detail['second_half_count']}회</p></div>
                     <div class="metric"><h3>소진모드 진입</h3><p>{cycle_detail['exhaust_count']}회</p></div>
-                    <div class="metric"><h3>쿼터매도</h3><p>{cycle_detail['quarter_sell_count']}회</p></div>
+                    <div class="metric warning"><h3>쿼터후보</h3><p>{cycle_detail['quarter_trigger_candidate_count']}일</p></div>
+                    <div class="metric positive"><h3>쿼터진입</h3><p>{cycle_detail['quarter_start_count']}회</p></div>
+                    <div class="metric"><h3>쿼터MOC</h3><p>{cycle_detail['quarter_moc_count']}회</p></div>
+                    <div class="metric"><h3>쿼터LOC매수</h3><p>{cycle_detail['quarter_loc_buy_count']}회</p></div>
+                    <div class="metric"><h3>쿼터LOC매도</h3><p>{cycle_detail['quarter_loc_sell_count']}회</p></div>
+                    <div class="metric"><h3>쿼터복귀/반복</h3><p>{cycle_detail['quarter_exit_count']} / {cycle_detail['quarter_repeat_count']}</p></div>
+                    <div class="metric"><h3>쿼터LOC매수금</h3><p>{cycle_detail['quarter_total_loc_buy_amount']:,.0f}원</p></div>
+                    <div class="metric"><h3>쿼터MOC매도금</h3><p>{cycle_detail['quarter_total_moc_sell_amount']:,.0f}원</p></div>
+                    <div class="metric {'positive' if cycle_detail['quarter_cash_validation_fail_count'] == 0 else 'danger'}"><h3>현금검증 실패</h3><p>{cycle_detail['quarter_cash_validation_fail_count']}건</p></div>
+                    <div class="metric {'positive' if cycle_detail['quarter_shares_validation_fail_count'] == 0 else 'danger'}"><h3>수량검증 실패</h3><p>{cycle_detail['quarter_shares_validation_fail_count']}건</p></div>
                     <div class="metric"><h3>완료손익</h3><p>{total_cycle_profit:,.0f}원</p></div>
                 </div>
                 <div class="table-wrap">
@@ -4665,6 +5055,9 @@ def home():
                 <p class="small-note">※ 이번 버전부터 완료 주기 0 고정 문제를 방지하기 위해 bt의 CycleId 진행값으로도 보정합니다.</p>
             </div>
             """
+
+    # Step25D-7-6: 주기별 최종상태/장기주기/현재 OPEN 주기 해석표를 주기 요약 뒤에 추가한다.
+    cycle_summary_html += make_cycle_status_audit_html(trade_df, bt, split_count)
 
     trade_rows = ""
     if not trade_df.empty:
@@ -4696,26 +5089,49 @@ def home():
                 <td>{ret:.2f}%</td>
                 <td>{row.get("OrderPrice", 0):,.2f}</td>
                 <td>{row.get("OrderQty", 0):,.4f}</td>
+                <td>{row.get("QuarterEventType", "")}</td>
+                <td>{row.get("CycleStatus", "")}</td>
+                <td>{row.get("CycleEndReason", "")}</td>
+                <td>{float(row.get("OpenQtyAfter", 0) or 0):,.4f}</td>
+                <td>{float(row.get("OpenMarketValueAfter", 0) or 0):,.0f}</td>
+                <td>{float(row.get("FeeAmount", 0) or 0):,.0f}</td>
+                <td>{float(row.get("CashBefore", 0) or 0):,.0f}</td>
+                <td>{float(row.get("CashAfter", 0) or 0):,.0f}</td>
+                <td>{"OK" if bool(row.get("CashValidationOK", True)) else "FAIL"}</td>
+                <td>{"OK" if bool(row.get("SharesValidationOK", True)) else "FAIL"}</td>
+                <td>{row.get("QuarterModeBefore", "")}</td>
+                <td>{row.get("QuarterModeAfter", "")}</td>
+                <td>{row.get("QuarterRoundAfter", "")}</td>
+                <td>{row.get("ModeTransitionReason", "")}</td>
                 <td>{row.get("Reason", "")}</td>
             </tr>
             """
 
     trade_log_html = f"""
     <div class="card">
-        <h2>Trade Event Log / 승률 / 보유일 분석</h2>
+        <h2>Trade Event Log / 이벤트후상태 / 완료주기 승률</h2>
         <div class="summary-grid">
-            <p>총 거래수: <b>{trade_summary["trade_count"]}</b></p>
-            <p>수익매도: <b>{trade_summary["win_count"]}</b></p>
-            <p>손실매도: <b>{trade_summary["loss_count"]}</b></p>
-            <p>승률: <b>{trade_summary["win_rate"]:.2f}%</b></p>
-            <p>평균 보유일: <b>{trade_summary["avg_hold_days"]:.1f}일</b></p>
-            <p>최대 보유일: <b>{trade_summary["max_hold_days"]}</b>일</p>
-            <p>연평균 거래횟수: <b>{trade_summary["trades_per_year"]:.2f}회</b></p>
+            <p>체결 이벤트: <b>{event_counts["event_count"]}</b></p>
+            <p>BUY/SELL 이벤트: <b>{event_counts["buy_event_count"]} / {event_counts["sell_event_count"]}</b></p>
+            <p>집계 기준: <b>{trade_summary.get("summary_basis", "완료 주기")}</b></p>
+            <p>완료주기수: <b>{trade_summary["trade_count"]}</b></p>
+            <p>수익주기: <b>{trade_summary["win_count"]}</b></p>
+            <p>손실주기: <b>{trade_summary["loss_count"]}</b></p>
+            <p>주기승률: <b>{trade_summary["win_rate"]:.2f}%</b></p>
+            <p>평균 주기보유일: <b>{trade_summary["avg_hold_days"]:.1f}일</b></p>
+            <p>최대 주기보유일: <b>{trade_summary["max_hold_days"]}</b>일</p>
+            <p>연평균 완료주기: <b>{trade_summary["trades_per_year"]:.2f}회</b></p>
             <p>현재 미청산: <b>{trade_summary["open_position"]}</b></p>
             <p>최대 분할: <b>{trade_summary["max_split"]:.1f} / {split_count}</b></p>
+            <p>쿼터진입: <b>{cycle_detail['quarter_start_count']}</b>회</p>
+            <p>쿼터MOC: <b>{cycle_detail['quarter_moc_count']}</b>회</p>
+            <p>쿼터LOC매수/매도: <b>{cycle_detail['quarter_loc_buy_count']} / {cycle_detail['quarter_loc_sell_count']}</b>회</p>
+            <p>쿼터LOC매수금: <b>{cycle_detail['quarter_total_loc_buy_amount']:,.0f}</b>원</p>
+            <p>쿼터MOC매도금: <b>{cycle_detail['quarter_total_moc_sell_amount']:,.0f}</b>원</p>
+            <p>쿼터 현금/수량 검증 실패: <b>{cycle_detail['quarter_cash_validation_fail_count']} / {cycle_detail['quarter_shares_validation_fail_count']}</b>건</p>
         </div>
 
-        <p class="small-note">※ Step25D-6-2부터 이 표는 실제 BUY/SELL 이벤트 기준입니다. CycleStartDate, EventDate, BuyEventDate, SellEventDate, LastBuyDate를 분리해 장기 주기가 날짜 점프처럼 보이는 문제를 줄였습니다. 승률/거래수 성과 집계는 SELL 이벤트만 사용합니다.</p>
+        <p class="small-note">※ 날짜 필터는 EventDate 기준이라 BUY 이벤트도 유지됩니다. 이 표의 이벤트후상태는 해당 이벤트 직후 상태입니다. 같은 주기 안에서 OPEN 이벤트가 많아도 최종상태표에서 COMPLETED면 완료 주기입니다. 승률/보유일은 부분매도 이벤트가 아니라 완료 주기 단위로 계산합니다.</p>
         <div class="table-wrap">
             <table border="1" cellpadding="6" cellspacing="0">
                 <tr>
@@ -4734,6 +5150,20 @@ def home():
                     <th>수익률</th>
                     <th>주문가</th>
                     <th>수량</th>
+                    <th>쿼터이벤트</th>
+                    <th>이벤트후상태</th>
+                    <th>이벤트후사유</th>
+                    <th>OpenQtyAfter</th>
+                    <th>Open평가액After</th>
+                    <th>수수료</th>
+                    <th>현금전</th>
+                    <th>현금후</th>
+                    <th>현금검증</th>
+                    <th>수량검증</th>
+                    <th>쿼터전</th>
+                    <th>쿼터후</th>
+                    <th>쿼터회차</th>
+                    <th>전환사유</th>
                     <th>사유</th>
                 </tr>
                 {trade_rows}
@@ -4757,10 +5187,18 @@ def home():
                 <td>{row.get("CycleId", "")}</td>
                 <td>{float(row.get("TBefore", 0) or 0):.2f}</td>
                 <td>{float(row.get("TAfter", row.get("T", 0)) or 0):.2f}</td>
+                <td>{float(row.get("Cash", 0) or 0):,.0f}</td>
+                <td>{float(row.get("Shares", 0) or 0):,.4f}</td>
+                <td>{float(row.get("AvgPrice", 0) or 0):,.2f}</td>
                 <td>{row.get("PhaseBefore", "")}</td>
                 <td>{row.get("PhaseAfter", row.get("Mode", ""))}</td>
                 <td>{row.get("Action", "")}</td>
                 <td>{row.get("OrderPlan", "")}</td>
+                <td>{row.get("QuarterRound", "")}</td>
+                <td>{row.get("QuarterUnitAmount", "")}</td>
+                <td>{"Y" if bool(row.get("QuarterTriggerCandidate", False)) else ""}</td>
+                <td>{row.get("QuarterTriggerReason", "")}</td>
+                <td>{row.get("ModeTransitionReason", "")}</td>
                 <td>{"Y" if bool(row.get("DailyCandleOrderAmbiguous", False)) else ""}</td>
             </tr>
             """
@@ -4768,11 +5206,11 @@ def home():
     order_plan_log_html = f"""
     <div class="card">
         <h2>Order Plan Log</h2>
-        <p class="small-note">※ bt 일별 행에서 주문계획이 있거나 실제 액션이 발생한 최근 40일입니다. V2.2 공식 자체는 변경하지 않았고, 표시/진단용 로그만 분리했습니다.</p>
+        <p class="small-note">※ bt 일별 행에서 주문계획이 있거나 실제 액션이 발생한 최근 40일입니다. V2.2 일반모드 공식은 유지하고, 쿼터손절모드 주문/전환 상태를 표시합니다.</p>
         <div class="table-wrap">
             <table border="1" cellpadding="6" cellspacing="0">
                 <tr>
-                    <th>날짜</th><th>주기</th><th>TBefore</th><th>TAfter</th><th>전상태</th><th>후상태</th><th>액션</th><th>주문계획</th><th>일봉순서불명확</th>
+                    <th>날짜</th><th>주기</th><th>TBefore</th><th>TAfter</th><th>현금</th><th>보유수량</th><th>평단</th><th>전상태</th><th>후상태</th><th>액션</th><th>주문계획</th><th>쿼터회차</th><th>쿼터1회금액</th><th>쿼터후보</th><th>쿼터후보사유</th><th>전환사유</th><th>일봉순서불명확</th>
                 </tr>
                 {order_plan_rows}
             </table>
@@ -5285,13 +5723,13 @@ def home():
 <body>
 <div class="seed-sidebar">
     <div class="seed-brand">Infinite Lab</div>
-    <div class="seed-brand-sub">Step25D-6 · RAOR Original Engine<br>V2.2 로그보정 · 쿼터손절 검증</div>
+    <div class="seed-brand-sub">Step25D-7-6 · RAOR Original Engine<br>V2.2 장기주기/OPEN주기 해석</div>
     <div class="seed-nav">
         <button type="button" class="{seed_dashboard_active}" data-panel-target="dashboard">대시보드</button>
         <button type="button" class="{seed_optimizer_active}" data-panel-target="optimizer">Optimizer</button>
         <button type="button" class="{seed_results_active}" data-panel-target="results">검증/로그</button>
         <button type="button" class="{seed_charts_active}" data-panel-target="charts">차트</button>
-        <span>25D-6: V2.2 로그보정</span>
+        <span>25D-7-6: V2.2 로그해석</span>
     </div>
 </div>
 <div class="seed-shell">
@@ -5385,11 +5823,11 @@ def home():
     <div class="metric {cagr_class}"><h3>CAGR</h3><p>{cagr:.2f}%</p></div>
     <div class="metric {mdd_class}"><h3>MDD</h3><p>{mdd:.2f}%</p></div>
 
-    <div class="metric {win_class}"><h3>승률</h3><p>{trade_summary["win_rate"]:.2f}%</p></div>
-    <div class="metric"><h3>거래수</h3><p>{trade_summary["trade_count"]}</p></div>
+    <div class="metric {win_class}"><h3>주기승률</h3><p>{trade_summary["win_rate"]:.2f}%</p></div>
+    <div class="metric"><h3>완료주기수</h3><p>{trade_summary["trade_count"]}</p></div>
 
-    <div class="metric"><h3>평균보유일</h3><p>{avg_hold_days:.1f}일</p></div>
-    <div class="metric"><h3>연평균거래</h3><p>{trades_per_year:.2f}회</p></div>
+    <div class="metric"><h3>평균주기보유일</h3><p>{avg_hold_days:.1f}일</p></div>
+    <div class="metric"><h3>연평균완료주기</h3><p>{trades_per_year:.2f}회</p></div>
 
     <div class="metric {open_class}"><h3>현재 미청산</h3><p>{open_position}</p></div>
     <div class="metric"><h3>남은 분할</h3><p>{active_remaining_t:.1f}T</p></div>
